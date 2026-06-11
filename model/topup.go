@@ -72,7 +72,11 @@ func RecordInviteTopupRewardLog(reward *InviteTopupReward) {
 	RecordLog(
 		reward.InviterId,
 		LogTypeSystem,
-		fmt.Sprintf("邀请用户充值奖励 %s", logger.LogQuota(reward.RewardQuota)),
+		fmt.Sprintf(
+			"邀请用户充值奖励，被邀请用户ID: %d，奖励额度: %s",
+			reward.InviteeId,
+			logger.LogQuota(reward.RewardQuota),
+		),
 	)
 }
 

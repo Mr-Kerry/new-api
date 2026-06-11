@@ -163,28 +163,6 @@ export default function SettingsCreditLimit(props) {
                   }
                 />
               </Col>
-              <Col xs={24} sm={12} md={8} lg={8} xl={6}>
-                <Form.InputNumber
-                  label={t('邀请用户充值返利比例')}
-                  field={'InviteTopupRewardRatio'}
-                  step={0.01}
-                  min={0}
-                  max={1}
-                  suffix={t('比例')}
-                  extraText={
-                    !complianceConfirmed
-                      ? t('非零值需先确认合规声明')
-                      : t('0 表示关闭，0.1 表示返 10%')
-                  }
-                  placeholder={t('例如：0.1')}
-                  onChange={(value) =>
-                    setInputs({
-                      ...inputs,
-                      InviteTopupRewardRatio: String(value),
-                    })
-                  }
-                />
-              </Col>
             </Row>
             <Row>
               <Col xs={24} sm={12} md={8} lg={8} xl={6}>
@@ -202,6 +180,28 @@ export default function SettingsCreditLimit(props) {
                     setInputs({
                       ...inputs,
                       QuotaForInvitee: String(value),
+                    })
+                  }
+                />
+              </Col>
+               <Col xs={24} sm={12} md={8} lg={8} xl={6}>
+                <Form.InputNumber
+                  label={t('邀请用户充值返利比例')}
+                  field={'InviteTopupRewardRatio'}
+                  step={0.01}
+                  min={0}
+                  max={1}
+                  suffix={t('比例')}
+                  extraText={
+                    !complianceConfirmed
+                      ? t('非零值需先确认合规声明')
+                      : t('0 表示关闭，0.1 表示返 10%')
+                  }
+                  placeholder={t('例如：0.1')}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      InviteTopupRewardRatio: String(value),
                     })
                   }
                 />

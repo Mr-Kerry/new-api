@@ -444,20 +444,19 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
-
+		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, int(quota))
+		if err != nil {
+			return err
+		}
 		userId = topUp.UserId
 		payMoney = topUp.Money
 		paymentMethod = topUp.PaymentMethod
 		return nil
 	})
-
 	if err != nil {
 		return err
 	}
-	inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, int(quota))
-		if err != nil {
-			return err
-		}
+	
 	// 事务外记录日志，避免阻塞
 	RecordTopupLog(userId, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney), callerIp, paymentMethod, "admin")
 	RecordInviteTopupRewardLog(inviteReward)
@@ -525,7 +524,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		if err != nil {
 			return err
 		}
-		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, int(quota))
+		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, quotaToAdd))
 		if err != nil {
 			return err
 		}
@@ -656,7 +655,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
-		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, int(quota))
+		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, quotaToAdd)
 		if err != nil {
 			return err
 		}

@@ -159,7 +159,10 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorMsg(c, "邀请充值返利比例必须在 0 到 1 之间，0.1 表示 10%")
 			return
 		}
-	}
+		if ratio > 0 && !operation_setting.IsPaymentComplianceConfirmed() {
+			common.ApiErrorI18n(c, i18n.MsgPaymentComplianceRequired)
+			return
+		}
 	switch option.Key {
 	case "GitHubOAuthEnabled":
 		if option.Value == "true" && common.GitHubClientId == "" {

@@ -11,6 +11,59 @@ import (
 	"gorm.io/gorm"
 )
 
+type InviteTopupReward struct {
+	InviterId   int
+	InviteeId   int
+	RewardQuota int
+}
+
+func RewardInviterForTopupTx(tx *gorm.DB, inviteeId int, quotaToAdd int) (*InviteTopupReward, error) {
+	if quotaToAdd <= 0 || common.InviteTopupRewardRatio <= 0 {
+		return nil, nil
+	}
+
+	var invitee User
+	if err := tx.Select("id", "inviter_id").Where("id = ?", inviteeId).First(&invitee).Error; err != nil {
+		return nil, err
+	}
+
+	if invitee.InviterId <= 0 || invitee.InviterId == inviteeId {
+		return nil, nil
+	}
+
+	rewardQuota := int(float64(quotaToAdd) * common.InviteTopupRewardRatio)
+	if rewardQuota <= 0 {
+		return nil, nil
+	}
+
+	if err := tx.Model(&User{}).
+		Where("id = ?", invitee.InviterId).
+		Updates(map[string]interface{}{
+			"aff_quota":   gorm.Expr("aff_quota + ?", rewardQuota),
+			"aff_history": gorm.Expr("aff_history + ?", rewardQuota),
+		}).Error; err != nil {
+		return nil, err
+	}
+
+	return &InviteTopupReward{
+		InviterId:   invitee.InviterId,
+		InviteeId:   inviteeId,
+		RewardQuota: rewardQuota,
+	}, nil
+}
+
+func RecordInviteTopupRewardLog(reward *InviteTopupReward) {
+	if reward == nil || reward.RewardQuota <= 0 {
+		return
+	}
+
+	RecordLog(
+		reward.InviterId,
+		LogTypeSystem,
+		fmt.Sprintf("邀请用户充值奖励 %s", logger.LogQuota(reward.RewardQuota)),
+	)
+}
+
 type TopUp struct {
 	Id              int     `json:"id"`
 	UserId          int     `json:"user_id" gorm:"index"`
@@ -112,6 +165,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 	}
 
 	var quota float64
+	var inviteReward *InviteTopupReward
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -145,7 +199,10 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		if err != nil {
 			return err
 		}
-
+		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, int(quota))
+		if err != nil {
+			return err
+		}
 		return nil
 	})
 
@@ -155,7 +212,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 	}
 
 	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%d", logger.FormatQuota(int(quota)), topUp.Amount), callerIp, topUp.PaymentMethod, PaymentMethodStripe)
-
+	RecordInviteTopupRewardLog(inviteReward)
 	return nil
 }
 
@@ -331,6 +388,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	var quotaToAdd int
 	var payMoney float64
 	var paymentMethod string
+	var inviteReward *InviteTopupReward
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
@@ -384,9 +442,13 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	if err != nil {
 		return err
 	}
-
+	inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, int(quota))
+		if err != nil {
+			return err
+		}
 	// 事务外记录日志，避免阻塞
 	RecordTopupLog(userId, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney), callerIp, paymentMethod, "admin")
+	RecordInviteTopupRewardLog(inviteReward)
 	return nil
 }
 func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string) (err error) {
@@ -395,6 +457,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	}
 
 	var quota int64
+	var inviteReward *InviteTopupReward
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -450,7 +513,10 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		if err != nil {
 			return err
 		}
-
+		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, int(quota))
+		if err != nil {
+			return err
+		}
 		return nil
 	})
 
@@ -460,7 +526,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	}
 
 	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用Creem充值成功，充值额度: %v，支付金额：%.2f", quota, topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodCreem)
-
+	RecordInviteTopupRewardLog(inviteReward)
 	return nil
 }
 
@@ -470,6 +536,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 	}
 
 	var quotaToAdd int
+	var inviteReward *InviteTopupReward
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -511,7 +578,10 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
-
+		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, int(quota))
+		if err != nil {
+			return err
+		}
 		return nil
 	})
 
@@ -522,6 +592,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 
 	if quotaToAdd > 0 {
 		RecordTopupLog(topUp.UserId, fmt.Sprintf("Waffo充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentMethodWaffo)
+		RecordInviteTopupRewardLog(inviteReward)
 	}
 
 	return nil
@@ -533,6 +604,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 	}
 
 	var quotaToAdd int
+	var inviteReward *InviteTopupReward
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -572,7 +644,10 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
-
+		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, int(quota))
+		if err != nil {
+			return err
+		}
 		return nil
 	})
 
@@ -583,6 +658,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 
 	if quotaToAdd > 0 {
 		RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("Waffo Pancake充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money))
+		RecordInviteTopupRewardLog(inviteReward)
 	}
 
 	return nil

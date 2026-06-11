@@ -501,6 +501,14 @@ func updateOptionMap(key string, value string) (err error) {
 		common.QuotaForInviter, _ = strconv.Atoi(value)
 	case "QuotaForInvitee":
 		common.QuotaForInvitee, _ = strconv.Atoi(value)
+	case "InviteTopupRewardRatio":
+		common.InviteTopupRewardRatio, _ = strconv.ParseFloat(value, 64)
+		if common.InviteTopupRewardRatio < 0 {
+			common.InviteTopupRewardRatio = 0
+		}
+		if common.InviteTopupRewardRatio > 1 {
+			common.InviteTopupRewardRatio = 1
+		}
 	case "QuotaRemindThreshold":
 		common.QuotaRemindThreshold, _ = strconv.Atoi(value)
 	case "PreConsumedQuota":

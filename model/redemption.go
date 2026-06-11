@@ -119,6 +119,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 	if userId == 0 {
 		return 0, errors.New("无效的 user id")
 	}
+	var inviteReward *InviteTopupReward
 	redemption := &Redemption{}
 
 	keyCol := "`key`"
@@ -141,6 +142,11 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if err != nil {
 			return err
 		}
+		reward, rewardErr := RewardInviterForTopupTx(tx, userId, redemption.Quota)
+		if rewardErr != nil {
+			return rewardErr
+		}
+		inviteReward = reward
 		redemption.RedeemedTime = common.GetTimestamp()
 		redemption.Status = common.RedemptionCodeStatusUsed
 		redemption.UsedUserId = userId
@@ -152,6 +158,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 		return 0, ErrRedeemFailed
 	}
 	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id))
+	RecordInviteTopupRewardLog(inviteReward)
 	return redemption.Quota, nil
 }
 

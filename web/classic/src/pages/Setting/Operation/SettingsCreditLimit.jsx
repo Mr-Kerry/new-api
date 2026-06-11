@@ -165,7 +165,7 @@ export default function SettingsCreditLimit(props) {
               </Col>
             </Row>
             <Row>
-              <Col xs={24} sm={12} md={8} lg={8} xl={6}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.InputNumber
                   label={t('新用户使用邀请码奖励额度')}
                   field={'QuotaForInvitee'}
@@ -184,7 +184,7 @@ export default function SettingsCreditLimit(props) {
                   }
                 />
               </Col>
-               <Col xs={24} sm={12} md={8} lg={8} xl={6}>
+               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.InputNumber
                   label={t('邀请用户充值返利比例')}
                   field={'InviteTopupRewardRatio'}

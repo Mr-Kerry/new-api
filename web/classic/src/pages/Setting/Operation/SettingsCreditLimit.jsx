@@ -36,6 +36,7 @@ export default function SettingsCreditLimit(props) {
     PreConsumedQuota: '',
     QuotaForInviter: '',
     QuotaForInvitee: '',
+    InviteTopupRewardRatio: '',
     'quota_setting.enable_free_model_pre_consume': true,
   });
   const refForm = useRef();
@@ -158,6 +159,28 @@ export default function SettingsCreditLimit(props) {
                     setInputs({
                       ...inputs,
                       QuotaForInviter: String(value),
+                    })
+                  }
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={6}>
+                <Form.InputNumber
+                  label={t('邀请用户充值返利比例')}
+                  field={'InviteTopupRewardRatio'}
+                  step={0.01}
+                  min={0}
+                  max={1}
+                  suffix={t('比例')}
+                  extraText={
+                    !complianceConfirmed
+                      ? t('非零值需先确认合规声明')
+                      : t('0 表示关闭，0.1 表示返 10%')
+                  }
+                  placeholder={t('例如：0.1')}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      InviteTopupRewardRatio: String(value),
                     })
                   }
                 />

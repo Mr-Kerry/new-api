@@ -403,11 +403,12 @@ func EpayNotify(c *gin.Context) {
 				logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 更新用户额度失败 trade_no=%s user_id=%d client_ip=%s quota_to_add=%d error=%q topup=%q", topUp.TradeNo, topUp.UserId, c.ClientIP(), quotaToAdd, err.Error(), common.GetJsonString(topUp)))
 				return
 			}
-			inviteReward, err := model.RewardInviterForTopup(topUp.UserId, quotaToAdd)
-			if err != nil {
-				logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 邀请充值返利失败 trade_no=%s user_id=%d client_ip=%s quota_to_add=%d error=%q", topUp.TradeNo, topUp.UserId, c.ClientIP(), quotaToAdd, err.Error()))
-				return
+			
+			inviteReward, rewardErr := model.RewardInviterForTopup(topUp.UserId, quotaToAdd)
+			if rewardErr != nil {
+				logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 邀请充值返利失败 trade_no=%s user_id=%d client_ip=%s quota_to_add=%d error=%q", topUp.TradeNo, topUp.UserId, c.ClientIP(), quotaToAdd, rewardErr.Error()))
 			}
+			
 			logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 充值成功 trade_no=%s user_id=%d client_ip=%s quota_to_add=%d money=%.2f topup=%q", topUp.TradeNo, topUp.UserId, c.ClientIP(), quotaToAdd, topUp.Money, common.GetJsonString(topUp)))
 			model.RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money), c.ClientIP(), topUp.PaymentMethod, "epay")
 			model.RecordInviteTopupRewardLog(inviteReward)

@@ -444,7 +444,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
-		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, int(quota))
+		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, quotaToAdd)
 		if err != nil {
 			return err
 		}
@@ -524,7 +524,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 		if err != nil {
 			return err
 		}
-		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, quotaToAdd))
+		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, int(quota))
 		if err != nil {
 			return err
 		}
@@ -589,7 +589,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
-		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, int(quota))
+		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, quotaToAdd)
 		if err != nil {
 			return err
 		}

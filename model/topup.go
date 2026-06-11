@@ -52,6 +52,18 @@ func RewardInviterForTopupTx(tx *gorm.DB, inviteeId int, quotaToAdd int) (*Invit
 	}, nil
 }
 
+func RewardInviterForTopup(inviteeId int, quotaToAdd int) (*InviteTopupReward, error) {
+	var reward *InviteTopupReward
+
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		reward, err = RewardInviterForTopupTx(tx, inviteeId, quotaToAdd)
+		return err
+	})
+
+	return reward, err
+}
+
 func RecordInviteTopupRewardLog(reward *InviteTopupReward) {
 	if reward == nil || reward.RewardQuota <= 0 {
 		return

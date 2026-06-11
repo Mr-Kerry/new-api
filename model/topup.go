@@ -449,10 +449,11 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
 		}
-		inviteReward, err = RewardInviterForTopupTx(tx, topUp.UserId, quotaToAdd)
-		if err != nil {
-			return err
+		reward, rewardErr := RewardInviterForTopupTx(tx, topUp.UserId, quotaToAdd)
+		if rewardErr != nil {
+			return rewardErr
 		}
+		inviteReward = reward
 		userId = topUp.UserId
 		payMoney = topUp.Money
 		paymentMethod = topUp.PaymentMethod

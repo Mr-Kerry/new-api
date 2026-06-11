@@ -191,7 +191,7 @@ export default function SettingsCreditLimit(props) {
                   step={0.01}
                   min={0}
                   max={1}
-                  suffix={t('比例')}
+                  suffix={t('x100%')}
                   extraText={
                     !complianceConfirmed
                       ? t('非零值需先确认合规声明')

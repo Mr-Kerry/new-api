@@ -148,6 +148,17 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorMsg(c, "合规确认字段不允许通过通用设置接口修改")
 			return
 		}
+	case "InviteTopupRewardRatio":
+		value, ok := option.Value.(string)
+		if !ok {
+			common.ApiErrorMsg(c, "邀请充值返利比例格式错误")
+			return
+		}
+		ratio, err := strconv.ParseFloat(value, 64)
+		if err != nil || ratio < 0 || ratio > 1 {
+			common.ApiErrorMsg(c, "邀请充值返利比例必须在 0 到 1 之间，0.1 表示 10%")
+			return
+		}
 	}
 	switch option.Key {
 	case "GitHubOAuthEnabled":

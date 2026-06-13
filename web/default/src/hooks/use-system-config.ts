@@ -166,6 +166,11 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
   }, [setConfig, setLoading])
 
   useEffect(() => {
+    const title = config.systemName?.trim() || DEFAULT_SYSTEM_NAME
+    document.title = title
+  }, [config.systemName])
+
+  useEffect(() => {
     if (autoLoad) loadConfig()
   }, [autoLoad, loadConfig])
 

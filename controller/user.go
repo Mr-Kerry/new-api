@@ -403,6 +403,12 @@ func GetSelf(c *gin.Context) {
 	// Hide admin remarks: set to empty to trigger omitempty tag, ensuring the remark field is not included in JSON returned to regular users
 	user.Remark = ""
 
+	var realAffCount int64
+	if err := model.DB.Model(&model.User{}).Where("inviter_id = ?", user.Id).Count(&realAffCount).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
 	// 计算用户权限信息
 	permissions := calculateUserPermissions(userRole)
 
@@ -427,7 +433,7 @@ func GetSelf(c *gin.Context) {
 		"used_quota":        user.UsedQuota,
 		"request_count":     user.RequestCount,
 		"aff_code":          user.AffCode,
-		"aff_count":         user.AffCount,
+		"aff_count":         realAffCount,
 		"aff_quota":         user.AffQuota,
 		"aff_history_quota": user.AffHistoryQuota,
 		"inviter_id":        user.InviterId,

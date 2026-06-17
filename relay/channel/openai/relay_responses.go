@@ -131,19 +131,17 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	})
 
 	if usage.CompletionTokens == 0 {
-		// 计算输出文本的 token 数量
 		tempStr := responseTextBuilder.String()
-		if len(tempStr) > 0 {
-			// 非正常结束，使用输出文本的 token 数量
+		if len(tempStr) > 0 && info != nil {
 			completionTokens := service.CountTextToken(tempStr, info.UpstreamModelName)
 			usage.CompletionTokens = completionTokens
 		}
 	}
-
-	if usage.PromptTokens == 0 && usage.CompletionTokens != 0 {
+	
+	if usage.PromptTokens == 0 && info != nil {
 		usage.PromptTokens = info.GetEstimatePromptTokens()
 	}
-
+	
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 
 	return usage, nil

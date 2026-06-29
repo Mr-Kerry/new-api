@@ -66,11 +66,13 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     log: true,
     midjourney: true,
     task: true,
+    radar: true,
   },
   personal: {
     enabled: true,
     topup: true,
     personal: true,
+    topStore: true,
   },
   admin: {
     enabled: true,

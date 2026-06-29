@@ -27,8 +27,10 @@ import {
   ListTodo,
   MessageSquare,
   Radio,
+  Radar,
   ServerCog,
   Settings,
+  ShoppingCart,
   Ticket,
   User,
   Users,
@@ -96,6 +98,11 @@ export function useSidebarData(): SidebarData {
             configUrls: ['/usage-logs/drawing', '/usage-logs/task'],
             icon: ListTodo,
           },
+          {
+            title: t('Radar'),
+            url: '/radar',
+            icon: Radar,
+          },
         ],
       },
       {
@@ -106,6 +113,11 @@ export function useSidebarData(): SidebarData {
             title: t('Wallet'),
             url: '/wallet',
             icon: Wallet,
+          },
+          {
+            title: t('Top-up Store'),
+            url: '/top-store',
+            icon: ShoppingCart,
           },
           {
             title: t('Profile'),

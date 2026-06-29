@@ -297,6 +297,7 @@ func migrateDB() error {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		
 	)
 	if err != nil {
 		return err
@@ -306,7 +307,7 @@ func migrateDB() error {
 			return err
 		}
 	} else {
-		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
+		if err := DB.AutoMigrate( &SubscriptionPlan{}); err != nil {
 			return err
 		}
 	}
@@ -378,7 +379,7 @@ func migrateDBFast() error {
 			return err
 		}
 	} else {
-		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
+		if err := DB.AutoMigrate( &SubscriptionPlan{}); err != nil {
 			return err
 		}
 	}
@@ -390,7 +391,7 @@ func migrateLOGDB() error {
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		return migrateClickHouseLogDB()
 	}
-	return LOG_DB.AutoMigrate(&Log{})
+	return LOG_DB.AutoMigrate( &Log{})
 }
 
 func migrateClickHouseLogDB() error {

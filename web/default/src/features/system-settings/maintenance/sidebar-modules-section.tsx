@@ -114,6 +114,10 @@ export function SidebarModulesSection({
         title: t('Task logs'),
         description: t('Background job tracker for queued work.'),
       },
+      radar: {
+        title: t('Radar'),
+        description: t('Codex model benchmark radar.'),
+      },
     },
     personal: {
       topup: {
@@ -123,6 +127,10 @@ export function SidebarModulesSection({
       personal: {
         title: t('Profile'),
         description: t('Personal settings and profile management.'),
+      },
+      topStore: {
+        title: t('Top-up Store'),
+        description: t('Open the configured top-up store page.'),
       },
     },
     admin: {

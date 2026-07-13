@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 
@@ -259,7 +260,10 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 			N:      lo.ToPtr(uint(1)),
 			Size:   "1024x1024",
 		}
-		if request.N != nil && *request.N > 0 {
+		if request.N != nil {
+			if *request.N <= 0 || *request.N > dto.MaxImageN {
+				return nil, fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
+			}
 			imgReq.N = lo.ToPtr(uint(*request.N))
 		}
 		if request.Size != "" {
@@ -268,7 +272,10 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		if len(request.ExtraBody) > 0 {
 			var extra map[string]any
 			if err := json.Unmarshal(request.ExtraBody, &extra); err == nil {
-				if n, ok := extra["n"].(float64); ok && n > 0 {
+				if n, ok := extra["n"].(float64); ok {
+					if math.IsNaN(n) || math.IsInf(n, 0) || n <= 0 || n > float64(dto.MaxImageN) || math.Trunc(n) != n {
+						return nil, fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
+					}
 					imgReq.N = lo.ToPtr(uint(n))
 				}
 				if size, ok := extra["size"].(string); ok {

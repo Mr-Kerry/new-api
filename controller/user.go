@@ -486,6 +486,12 @@ func GetSelf(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	affCount, err := model.CountUsersByInviterId(user.Id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	user.AffCount = int(affCount)
 	responseData := buildSelfUserData(user)
 	// The authenticated role is loaded from GetUserCache. It should equal the
 	// row role, but use it for capabilities so GetSelf and login/refresh remain
@@ -585,12 +591,14 @@ func generateDefaultSidebarConfig(userRole int) string {
 		"log":        true,
 		"midjourney": true,
 		"task":       true,
+		"radar":      true,
 	}
 
 	// 个人中心区域 - 所有用户都可以访问
 	defaultConfig["personal"] = map[string]interface{}{
 		"enabled":  true,
 		"topup":    true,
+		"topStore": true,
 		"personal": true,
 	}
 

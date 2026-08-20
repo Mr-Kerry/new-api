@@ -233,12 +233,14 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 		"log":        true,
 		"midjourney": true,
 		"task":       true,
+		"radar":      true,
 	}
 
 	// 个人中心区域 - 所有用户都可以访问
 	defaultConfig["personal"] = map[string]interface{}{
 		"enabled":  true,
 		"topup":    true,
+		"topStore": true,
 		"personal": true,
 	}
 
@@ -319,6 +321,15 @@ func CountUsersByEmail(email string) (int64, error) {
 	}
 	var count int64
 	err := emailQuery(DB, email).Count(&count).Error
+	return count, err
+}
+
+func CountUsersByInviterId(inviterId int) (int64, error) {
+	if inviterId <= 0 {
+		return 0, nil
+	}
+	var count int64
+	err := DB.Model(&User{}).Where("inviter_id = ?", inviterId).Count(&count).Error
 	return count, err
 }
 
@@ -529,12 +540,18 @@ func HardDeleteUserById(id int) error {
 	return user.HardDelete()
 }
 
-func inviteUser(inviterId int) error {
-	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]interface{}{
-		"aff_count":   gorm.Expr("aff_count + ?", 1),
-		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
-		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
-	})
+func inviteUser(tx *gorm.DB, inviterId int) error {
+	if tx == nil {
+		tx = DB
+	}
+	updates := map[string]interface{}{
+		"aff_count": gorm.Expr("aff_count + ?", 1),
+	}
+	if common.QuotaForInviter > 0 && operation_setting.IsPaymentComplianceConfirmed() {
+		updates["aff_quota"] = gorm.Expr("aff_quota + ?", common.QuotaForInviter)
+		updates["aff_history"] = gorm.Expr("aff_history + ?", common.QuotaForInviter)
+	}
+	result := tx.Model(&User{}).Where("id = ?", inviterId).Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -633,6 +650,7 @@ func ensureEmailAvailableWithTx(tx *gorm.DB, email string, excludeUserID int) er
 }
 
 func (user *User) Insert(inviterId int) error {
+	user.InviterId = inviterId
 	if err := DB.Transaction(func(tx *gorm.DB) error {
 		return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
 			if err := user.prepareForInsert(tx); err != nil {
@@ -648,7 +666,13 @@ func (user *User) Insert(inviterId int) error {
 				user.SetSetting(defaultSetting)
 			}
 
-			return tx.Create(user).Error
+			if err := tx.Create(user).Error; err != nil {
+				return err
+			}
+			if inviterId != 0 {
+				return inviteUser(tx, inviterId)
+			}
+			return nil
 		})
 	}); err != nil {
 		return err
@@ -683,9 +707,7 @@ func (user *User) finishInsert(inviterId int) {
 			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
 		}
 		if common.QuotaForInviter > 0 {
-			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
 			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
 		}
 	}
 }
@@ -696,8 +718,9 @@ func (user *User) FinishInsert(inviterId int) {
 
 // InsertWithTx inserts a new user within an existing transaction.
 // This is used for OAuth registration where user creation and binding need to be atomic.
-// Post-creation tasks (sidebar config, logs, inviter rewards) are handled after the transaction commits.
+// Sidebar initialization and logs are handled after commit; inviter state is updated in this transaction.
 func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
+	user.InviterId = inviterId
 	return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
 		if err := user.prepareForInsert(tx); err != nil {
 			return err
@@ -711,7 +734,13 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			user.SetSetting(defaultSetting)
 		}
 
-		return tx.Create(user).Error
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+		if inviterId != 0 {
+			return inviteUser(tx, inviterId)
+		}
+		return nil
 	})
 }
 
@@ -741,7 +770,6 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		}
 		if common.QuotaForInviter > 0 {
 			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
 		}
 	}
 }

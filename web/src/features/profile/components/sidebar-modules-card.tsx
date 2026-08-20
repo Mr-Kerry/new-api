@@ -103,6 +103,11 @@ export function SidebarModulesCard() {
           title: t('Task Logs'),
           description: t('System task records'),
         },
+        {
+          key: 'radar',
+          title: t('Radar'),
+          description: t('Codex model benchmark radar.'),
+        },
       ],
     },
     {
@@ -114,6 +119,11 @@ export function SidebarModulesCard() {
           key: 'topup',
           title: t('Wallet Management'),
           description: t('Balance and top-up management'),
+        },
+        {
+          key: 'topStore',
+          title: t('Top-up Store'),
+          description: t('Open the configured top-up store page.'),
         },
         {
           key: 'personal',

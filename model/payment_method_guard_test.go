@@ -1,24 +1,56 @@
 package model
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func insertUserForPaymentGuardTest(t *testing.T, id int, quota int) *User {
 	t.Helper()
 	user := &User{
 		Id:       id,
-		Username: "payment_guard_user",
+		Username: "payment_guard_user_" + strconv.Itoa(id),
 		Status:   common.UserStatusEnabled,
 		Quota:    quota,
 	}
 	require.NoError(t, DB.Create(user).Error)
 	return user
+}
+
+func enableInviteTopupRewardForTest(t *testing.T, ratio float64) {
+	t.Helper()
+	paymentSetting := operation_setting.GetPaymentSetting()
+	oldConfirmed := paymentSetting.ComplianceConfirmed
+	oldTermsVersion := paymentSetting.ComplianceTermsVersion
+	common.OptionMapRWMutex.Lock()
+	oldRatio := common.InviteTopupRewardRatio
+	common.InviteTopupRewardRatio = ratio
+	common.OptionMapRWMutex.Unlock()
+
+	paymentSetting.ComplianceConfirmed = true
+	paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
+
+	t.Cleanup(func() {
+		paymentSetting.ComplianceConfirmed = oldConfirmed
+		paymentSetting.ComplianceTermsVersion = oldTermsVersion
+		common.OptionMapRWMutex.Lock()
+		common.InviteTopupRewardRatio = oldRatio
+		common.OptionMapRWMutex.Unlock()
+	})
+}
+
+func getInviteRewardForPaymentGuardTest(t *testing.T, userID int) (quota int, history int) {
+	t.Helper()
+	var user User
+	require.NoError(t, DB.Select("aff_quota", "aff_history").Where("id = ?", userID).First(&user).Error)
+	return user.AffQuota, user.AffHistoryQuota
 }
 
 func insertSubscriptionPlanForPaymentGuardTest(t *testing.T, id int) *SubscriptionPlan {
@@ -214,6 +246,106 @@ func TestRechargeEpayCreditsQuotaExactlyOnce(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, alreadyDone)
 	assert.Equal(t, 2*500000, getUserQuotaForPaymentGuardTest(t, user.Id))
+}
+
+func TestManualCompleteTopUpDoesNotRepeatCreditOrReward(t *testing.T) {
+	truncateTables(t)
+	enableInviteTopupRewardForTest(t, 0.1)
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 100
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	inviter := insertUserForPaymentGuardTest(t, 510, 0)
+	invitee := insertUserForPaymentGuardTest(t, 511, 0)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", invitee.Id).Update("inviter_id", inviter.Id).Error)
+	order := createEpayTestOrder(t, invitee.Id, "MANUALTESTINVITEREWARD", PaymentProviderEpay, common.TopUpStatusPending)
+
+	require.NoError(t, ManualCompleteTopUp(order.TradeNo, "127.0.0.1"))
+	require.NoError(t, ManualCompleteTopUp(order.TradeNo, "127.0.0.1"))
+	assert.Equal(t, 200, getUserQuotaForPaymentGuardTest(t, invitee.Id))
+	quota, history := getInviteRewardForPaymentGuardTest(t, inviter.Id)
+	assert.Equal(t, 20, quota)
+	assert.Equal(t, 20, history)
+}
+
+func TestRechargeEpayRewardsInviterExactlyOnce(t *testing.T) {
+	truncateTables(t)
+	enableInviteTopupRewardForTest(t, 0.1)
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 100
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	inviter := insertUserForPaymentGuardTest(t, 506, 0)
+	invitee := insertUserForPaymentGuardTest(t, 507, 0)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", invitee.Id).Update("inviter_id", inviter.Id).Error)
+	order := createEpayTestOrder(t, invitee.Id, "EPAYTESTINVITEREWARD", PaymentProviderEpay, common.TopUpStatusPending)
+
+	alreadyDone, err := RechargeEpay(order.TradeNo, "alipay", "127.0.0.1")
+	require.NoError(t, err)
+	assert.False(t, alreadyDone)
+	quota, history := getInviteRewardForPaymentGuardTest(t, inviter.Id)
+	assert.Equal(t, 20, quota)
+	assert.Equal(t, 20, history)
+
+	alreadyDone, err = RechargeEpay(order.TradeNo, "alipay", "127.0.0.1")
+	require.NoError(t, err)
+	assert.True(t, alreadyDone)
+	quota, history = getInviteRewardForPaymentGuardTest(t, inviter.Id)
+	assert.Equal(t, 20, quota)
+	assert.Equal(t, 20, history)
+}
+
+func TestRechargeEpayRollsBackWhenInviterRewardWouldOverflow(t *testing.T) {
+	truncateTables(t)
+	enableInviteTopupRewardForTest(t, 0.1)
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 100
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	inviter := insertUserForPaymentGuardTest(t, 508, 0)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", inviter.Id).Updates(map[string]interface{}{
+		"aff_quota":   common.MaxQuota - 10,
+		"aff_history": common.MaxQuota - 10,
+	}).Error)
+	invitee := insertUserForPaymentGuardTest(t, 509, 7)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", invitee.Id).Update("inviter_id", inviter.Id).Error)
+	order := createEpayTestOrder(t, invitee.Id, "EPAYTESTINVITEOVERFLOW", PaymentProviderEpay, common.TopUpStatusPending)
+
+	_, err := RechargeEpay(order.TradeNo, "alipay", "127.0.0.1")
+	require.Error(t, err)
+	assert.Equal(t, 7, getUserQuotaForPaymentGuardTest(t, invitee.Id))
+	assert.Equal(t, common.TopUpStatusPending, getTopUpStatusForPaymentGuardTest(t, order.TradeNo))
+	quota, history := getInviteRewardForPaymentGuardTest(t, inviter.Id)
+	assert.Equal(t, common.MaxQuota-10, quota)
+	assert.Equal(t, common.MaxQuota-10, history)
+}
+
+func TestRewardInviterForTopupSkipsMissingAndSelfInviters(t *testing.T) {
+	truncateTables(t)
+	enableInviteTopupRewardForTest(t, 0.1)
+
+	t.Run("missing inviter", func(t *testing.T) {
+		invitee := insertUserForPaymentGuardTest(t, 512, 0)
+		require.NoError(t, DB.Model(&User{}).Where("id = ?", invitee.Id).Update("inviter_id", 999999).Error)
+		require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+			reward, err := rewardInviterForTopupTx(tx, invitee.Id, 100)
+			assert.Nil(t, reward)
+			return err
+		}))
+	})
+
+	t.Run("self inviter", func(t *testing.T) {
+		invitee := insertUserForPaymentGuardTest(t, 513, 0)
+		require.NoError(t, DB.Model(&User{}).Where("id = ?", invitee.Id).Update("inviter_id", invitee.Id).Error)
+		require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+			reward, err := rewardInviterForTopupTx(tx, invitee.Id, 100)
+			assert.Nil(t, reward)
+			return err
+		}))
+	})
 }
 
 func TestRechargeEpayKeepsRedisAndDatabaseCreditInSync(t *testing.T) {

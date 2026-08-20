@@ -1,6 +1,8 @@
 package model
 
 import (
+	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -134,6 +136,7 @@ func InitOptionMap() {
 	common.OptionMap["QuotaForNewUser"] = strconv.Itoa(common.QuotaForNewUser)
 	common.OptionMap["QuotaForInviter"] = strconv.Itoa(common.QuotaForInviter)
 	common.OptionMap["QuotaForInvitee"] = strconv.Itoa(common.QuotaForInvitee)
+	common.OptionMap["InviteTopupRewardRatio"] = strconv.FormatFloat(common.InviteTopupRewardRatio, 'f', -1, 64)
 	common.OptionMap["QuotaRemindThreshold"] = strconv.Itoa(common.QuotaRemindThreshold)
 	common.OptionMap["PreConsumedQuota"] = strconv.Itoa(common.PreConsumedQuota)
 	common.OptionMap["ModelRequestRateLimitCount"] = strconv.Itoa(setting.ModelRequestRateLimitCount)
@@ -205,21 +208,34 @@ func SyncOptions(frequency int) {
 	}
 }
 
-func validateOptionValue(key string, value string) error {
+func normalizeOptionValue(key string, value string) (string, error) {
+	if key == "InviteTopupRewardRatio" {
+		ratio, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if err != nil || math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 || ratio > 1 {
+			return "", fmt.Errorf("InviteTopupRewardRatio must be a finite number between 0 and 1")
+		}
+		return strconv.FormatFloat(ratio, 'f', -1, 64), nil
+	}
 	if key == operation_setting.ToolPriceOptionKey {
-		return operation_setting.ValidateToolPricesJSON(value)
+		return value, operation_setting.ValidateToolPricesJSON(value)
 	}
 	if key == operation_setting.ChannelTestConcurrencyOptionKey {
 		return operation_setting.ValidateChannelTestConcurrency(value)
 	}
 	if key == "MaxTokenAutoGroups" {
-		return setting.ValidateMaxTokenAutoGroups(value)
+		return value, setting.ValidateMaxTokenAutoGroups(value)
 	}
-	return nil
+	return value, nil
+}
+
+func validateOptionValue(key string, value string) error {
+	_, err := normalizeOptionValue(key, value)
+	return err
 }
 
 func UpdateOption(key string, value string) error {
-	if err := validateOptionValue(key, value); err != nil {
+	value, err := normalizeOptionValue(key, value)
+	if err != nil {
 		return err
 	}
 	// Save to database first
@@ -246,13 +262,16 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
+	normalizedValues := make(map[string]string, len(values))
 	for key, value := range values {
-		if err := validateOptionValue(key, value); err != nil {
+		normalizedValue, err := normalizeOptionValue(key, value)
+		if err != nil {
 			return err
 		}
+		normalizedValues[key] = normalizedValue
 	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		for k, v := range values {
+		for k, v := range normalizedValues {
 			option := Option{Key: k}
 			if err := tx.FirstOrCreate(&option, Option{Key: k}).Error; err != nil {
 				return err
@@ -267,7 +286,7 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if err != nil {
 		return err
 	}
-	for k, v := range values {
+	for k, v := range normalizedValues {
 		if err := updateOptionMap(k, v); err != nil {
 			return err
 		}
@@ -281,6 +300,10 @@ func updateOptionMap(key string, value string) (err error) {
 		delete(common.OptionMap, key)
 		common.OptionMapRWMutex.Unlock()
 		return nil
+	}
+	value, err = normalizeOptionValue(key, value)
+	if err != nil {
+		return err
 	}
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
@@ -536,6 +559,8 @@ func updateOptionMap(key string, value string) (err error) {
 		common.QuotaForInviter, _ = strconv.Atoi(value)
 	case "QuotaForInvitee":
 		common.QuotaForInvitee, _ = strconv.Atoi(value)
+	case "InviteTopupRewardRatio":
+		common.InviteTopupRewardRatio, err = strconv.ParseFloat(value, 64)
 	case "QuotaRemindThreshold":
 		common.QuotaRemindThreshold, _ = strconv.Atoi(value)
 	case "PreConsumedQuota":

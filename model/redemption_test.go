@@ -179,3 +179,27 @@ func TestRedeemConcurrentSingleSuccess(t *testing.T) {
 	require.NoError(t, DB.First(&user, "id = ?", userId).Error)
 	assert.Equal(t, 300, user.Quota, "quota must be credited exactly once")
 }
+
+func TestRedeemConcurrentRewardsInviterExactlyOnce(t *testing.T) {
+	userId, key := setupRedeemFixture(t, 300)
+	enableInviteTopupRewardForTest(t, 0.1)
+
+	inviter := &User{Username: "redeem-inviter", Status: common.UserStatusEnabled}
+	require.NoError(t, DB.Create(inviter).Error)
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", userId).Update("inviter_id", inviter.Id).Error)
+
+	const goroutines = 5
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			_, _ = Redeem(key, userId)
+		}()
+	}
+	wg.Wait()
+
+	quota, history := getInviteRewardForPaymentGuardTest(t, inviter.Id)
+	assert.Equal(t, 30, quota)
+	assert.Equal(t, 30, history)
+}

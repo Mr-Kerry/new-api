@@ -1,6 +1,7 @@
 package vertex
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -259,29 +260,38 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 			N:      lo.ToPtr(uint(1)),
 			Size:   "1024x1024",
 		}
-		if request.N != nil && *request.N > 0 {
+		if request.N != nil {
+			if *request.N < 1 || *request.N > dto.MaxImageN {
+				return nil, fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
+			}
 			imgReq.N = lo.ToPtr(uint(*request.N))
 		}
 		if request.Size != "" {
 			imgReq.Size = request.Size
 		}
 		if len(request.ExtraBody) > 0 {
-			var extra map[string]any
-			if err := common.Unmarshal(request.ExtraBody, &extra); err == nil {
-				if n, ok := extra["n"].(float64); ok && n > 0 {
-					imgReq.N = lo.ToPtr(uint(n))
+			var extra map[string]json.RawMessage
+			if err := common.Unmarshal(request.ExtraBody, &extra); err != nil {
+				return nil, fmt.Errorf("invalid extra_body: %w", err)
+			}
+			if rawN, ok := extra["n"]; ok {
+				var n int
+				if err := common.Unmarshal(rawN, &n); err != nil || n < 1 || n > dto.MaxImageN {
+					return nil, fmt.Errorf("extra_body.n must be an integer between 1 and %d", dto.MaxImageN)
 				}
-				if size, ok := extra["size"].(string); ok {
-					imgReq.Size = size
-				}
-				// accept aspectRatio in extra body (top-level or under parameters)
-				if ar, ok := extra["aspectRatio"].(string); ok && ar != "" {
-					imgReq.Size = ar
-				}
-				if params, ok := extra["parameters"].(map[string]any); ok {
-					if ar, ok := params["aspectRatio"].(string); ok && ar != "" {
-						imgReq.Size = ar
-					}
+				imgReq.N = lo.ToPtr(uint(n))
+			}
+			var value string
+			if rawSize, ok := extra["size"]; ok && common.Unmarshal(rawSize, &value) == nil {
+				imgReq.Size = value
+			}
+			if rawAspectRatio, ok := extra["aspectRatio"]; ok && common.Unmarshal(rawAspectRatio, &value) == nil && value != "" {
+				imgReq.Size = value
+			}
+			var params map[string]json.RawMessage
+			if rawParams, ok := extra["parameters"]; ok && common.Unmarshal(rawParams, &params) == nil {
+				if rawAspectRatio, ok := params["aspectRatio"]; ok && common.Unmarshal(rawAspectRatio, &value) == nil && value != "" {
+					imgReq.Size = value
 				}
 			}
 		}

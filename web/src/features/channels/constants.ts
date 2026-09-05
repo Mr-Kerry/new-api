@@ -383,6 +383,27 @@ export const FIELD_DESCRIPTIONS = {
   OPENAI_ORG: 'OpenAI Organization ID (optional)',
 } as const
 
+export const CHANNEL_TEST_ENDPOINT_TYPE_OPTIONS = [
+  { value: 'auto', label: 'Auto detect (default)' },
+  { value: 'openai', label: 'OpenAI (/v1/chat/completions)' },
+  { value: 'openai-response', label: 'OpenAI Responses (/v1/responses)' },
+  {
+    value: 'openai-response-compact',
+    label: 'OpenAI Response Compaction (/v1/responses/compact)',
+  },
+  { value: 'anthropic', label: 'Anthropic (/v1/messages)' },
+  {
+    value: 'gemini',
+    label: 'Gemini (/v1beta/models/{model}:generateContent)',
+  },
+  { value: 'jina-rerank', label: 'Jina Rerank (/v1/rerank)' },
+  {
+    value: 'image-generation',
+    label: 'Image Generation (/v1/images/generations)',
+  },
+  { value: 'embeddings', label: 'Embeddings (/v1/embeddings)' },
+] as const
+
 // ============================================================================
 // Channel Type Specific Configurations
 // ============================================================================

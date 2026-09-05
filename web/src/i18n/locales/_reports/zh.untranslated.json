@@ -1,0 +1,6 @@
+{
+  "Anthropic (/v1/messages)": "Anthropic (/v1/messages)",
+  "Gemini (/v1beta/models/{model}:generateContent)": "Gemini (/v1beta/models/{model}:generateContent)",
+  "OpenAI (/v1/chat/completions)": "OpenAI (/v1/chat/completions)",
+  "OpenAI Responses (/v1/responses)": "OpenAI Responses (/v1/responses)"
+}

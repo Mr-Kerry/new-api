@@ -38,7 +38,12 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
+import {
+  LOG_TYPE_ALL_VALUE,
+  LOG_TYPE_ENUM,
+  LOG_TYPE_FILTERS,
+  USER_LOG_TYPE_FILTERS,
+} from '../constants'
 import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
 import type { CommonLogFilters } from '../types'
@@ -68,13 +73,18 @@ function isLogTypeValue(value: string): value is LogTypeValue {
   return logTypeValueSet.has(value)
 }
 
-function getLogTypeValue(value: unknown): LogTypeValue {
-  return Array.isArray(value) &&
+function getLogTypeValue(value: unknown, isAdmin: boolean): LogTypeValue {
+  const resolved =
+    Array.isArray(value) &&
     value.length === 1 &&
     typeof value[0] === 'string' &&
     isLogTypeValue(value[0])
-    ? value[0]
-    : LOG_TYPE_ALL_VALUE
+      ? value[0]
+      : LOG_TYPE_ALL_VALUE
+  if (!isAdmin && resolved === String(LOG_TYPE_ENUM.CHANNEL_MONITOR)) {
+    return LOG_TYPE_ALL_VALUE
+  }
+  return resolved
 }
 
 function buildSearchSourceKey(values: {
@@ -150,7 +160,7 @@ export function CommonLogsFilterBar<TData>(
     return {
       sourceKey: buildSearchSourceKey(sourceValues),
       filters,
-      logType: getLogTypeValue(searchParams.type),
+      logType: getLogTypeValue(searchParams.type, isAdmin),
     }
   }, [
     searchParams.startTime,
@@ -163,6 +173,7 @@ export function CommonLogsFilterBar<TData>(
     searchParams.requestId,
     searchParams.upstreamRequestId,
     searchParams.type,
+    isAdmin,
   ])
   const [draft, setDraft] = useState<CommonLogDraft>(() => searchState)
   const activeDraft =
@@ -252,13 +263,16 @@ export function CommonLogsFilterBar<TData>(
     filters.upstreamRequestId,
   ].filter(Boolean).length
   const sensitiveType = sensitiveVisible ? 'text' : 'password'
+  const availableLogTypeFilters = isAdmin
+    ? LOG_TYPE_FILTERS
+    : USER_LOG_TYPE_FILTERS
   const logTypeItems = useMemo(
     () =>
-      LOG_TYPE_FILTERS.map((type) => ({
+      availableLogTypeFilters.map((type) => ({
         value: type.value,
         label: t(type.label),
       })),
-    [t]
+    [availableLogTypeFilters, t]
   )
   const logTypeLabel =
     logTypeItems.find((type) => type.value === logType)?.label ?? t('All Types')
@@ -348,7 +362,7 @@ export function CommonLogsFilterBar<TData>(
         </SelectTrigger>
         <SelectContent alignItemWithTrigger={false}>
           <SelectGroup>
-            {LOG_TYPE_FILTERS.map((type) => (
+            {availableLogTypeFilters.map((type) => (
               <SelectItem key={type.value} value={type.value}>
                 {t(type.label)}
               </SelectItem>

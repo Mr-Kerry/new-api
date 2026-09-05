@@ -58,6 +58,20 @@ function getAnnouncementKey(item: Record<string, unknown>): string {
   return `hash:${hashString(fingerprint)}`
 }
 
+function getLatestAnnouncement(
+  announcements: Record<string, unknown>[]
+): Record<string, unknown> | null {
+  return announcements.reduce<Record<string, unknown> | null>((latest, item) => {
+    if (!latest) return item
+
+    const latestTime = new Date(String(latest.publishDate || '')).getTime()
+    const itemTime = new Date(String(item.publishDate || '')).getTime()
+    if (Number.isNaN(latestTime)) return item
+    if (Number.isNaN(itemTime)) return latest
+    return itemTime > latestTime ? item : latest
+  }, null)
+}
+
 /**
  * Hook to manage notifications (Notice + Announcements)
  * Provides unread counts and read status management
@@ -83,9 +97,19 @@ export function useNotifications() {
   const { status, loading: statusLoading } = useStatus()
   const announcementsEnabled = status?.announcements_enabled ?? false
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const announcements: Record<string, unknown>[] = announcementsEnabled
-    ? ((status?.announcements || []) as Record<string, unknown>[]).slice(0, 20)
-    : []
+  const announcements: Record<string, unknown>[] = useMemo(() => {
+    if (!announcementsEnabled) return []
+
+    return [...((status?.announcements || []) as Record<string, unknown>[])]
+      .sort((a, b) => {
+        const aTime = new Date(String(a.publishDate || '')).getTime()
+        const bTime = new Date(String(b.publishDate || '')).getTime()
+        if (Number.isNaN(aTime)) return 1
+        if (Number.isNaN(bTime)) return -1
+        return bTime - aTime
+      })
+      .slice(0, 20)
+  }, [announcementsEnabled, status?.announcements])
 
   // Notification store
   const {
@@ -99,11 +123,20 @@ export function useNotifications() {
   const noticeContent = noticeResponse?.success
     ? (noticeResponse.data || '').trim()
     : ''
+  const latestAnnouncement = getLatestAnnouncement(announcements)
+  const latestAnnouncementContent = String(latestAnnouncement?.content || '').trim()
+  const displayedNotice = latestAnnouncementContent || noticeContent
+  const displayedNoticeAnnouncement = latestAnnouncementContent
+    ? latestAnnouncement
+    : null
 
   // Calculate unread counts
   const unreadCounts = useMemo(() => {
-    const noticeUnread =
-      noticeContent && noticeContent !== lastReadNotice ? 1 : 0
+    const noticeUnread = latestAnnouncementContent
+      ? 0
+      : noticeContent && noticeContent !== lastReadNotice
+        ? 1
+        : 0
 
     const announcementsUnread = announcements.filter(
       (item: Record<string, unknown>) => {
@@ -117,7 +150,7 @@ export function useNotifications() {
       announcements: announcementsUnread,
       total: noticeUnread + announcementsUnread,
     }
-  }, [noticeContent, lastReadNotice, announcements, isAnnouncementRead])
+  }, [noticeContent, latestAnnouncementContent, lastReadNotice, announcements, isAnnouncementRead])
 
   const markAnnouncementsAsRead = () => {
     if (announcements.length > 0) {
@@ -133,7 +166,9 @@ export function useNotifications() {
     const nextTab = tab || activeTab
 
     // Mark currently visible content as read when opening the notification center
-    if (noticeContent) {
+    if (displayedNoticeAnnouncement) {
+      markAnnouncementsRead([getAnnouncementKey(displayedNoticeAnnouncement)])
+    } else if (noticeContent) {
       markNoticeRead(noticeContent)
     }
     if (nextTab === 'announcements') {
@@ -164,7 +199,8 @@ export function useNotifications() {
 
   return {
     // Data
-    notice: noticeContent,
+    notice: displayedNotice,
+    noticeAnnouncement: displayedNoticeAnnouncement,
     announcements,
     loading: noticeLoading || statusLoading,
 

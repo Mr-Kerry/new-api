@@ -1639,7 +1639,9 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
   onRequestRuleExprChange,
 }: TieredPricingEditorProps) {
   const { t } = useTranslation()
-  const [editorMode, setEditorMode] = useState<EditorMode>('visual')
+  const [editorMode, setEditorMode] = useState<EditorMode>(() =>
+    currentExpr && tryParseVisualConfig(currentExpr) === null ? 'raw' : 'visual'
+  )
   const [visualConfig, setVisualConfig] = useState<VisualConfig | null>(() =>
     tryParseVisualConfig(currentExpr)
   )
@@ -1681,7 +1683,7 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
   }, [currentRequestRuleExpr])
 
   const effectiveExpr = useMemo(() => {
-    if (editorMode === 'visual') {
+    if (editorMode === 'visual' && visualConfig) {
       return generateExprFromVisualConfig(visualConfig)
     }
     const { billingExpr } = splitBillingExprAndRequestRules(rawExpr)
@@ -1727,11 +1729,9 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
         const { billingExpr, requestRuleExpr: ruleStr } =
           splitBillingExprAndRequestRules(rawExpr)
         const parsed = tryParseVisualConfig(billingExpr)
-        if (parsed) {
-          setVisualConfig(parsed)
-        } else {
-          setVisualConfig(createDefaultVisualConfig())
-        }
+        if (!parsed) return
+        setVisualConfig(parsed)
+
         const parsedGroups = tryParseRequestRuleExpr(ruleStr)
         setRequestRuleGroups(parsedGroups || [])
         onRequestRuleExprChange(ruleStr)

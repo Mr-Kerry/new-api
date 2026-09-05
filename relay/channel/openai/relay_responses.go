@@ -168,7 +168,10 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 	}
 
-	if usage.PromptTokens == 0 && usage.CompletionTokens != 0 {
+	if usage.PromptTokens == 0 {
+		// Responses streams may end without a completion event or output text.
+		// Preserve the locally estimated input usage in that case so a successful
+		// request is not recorded as free merely because the stream was empty.
 		usage.PromptTokens = info.GetEstimatePromptTokens()
 	}
 

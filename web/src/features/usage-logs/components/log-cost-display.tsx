@@ -118,8 +118,22 @@ function SubscriptionBadge(props: { quota: number }) {
 }
 
 export function LogCostDisplay(props: LogCostDisplayProps) {
+  const { t } = useTranslation()
   const isSubscription = props.other?.billing_source === 'subscription'
   const showToolSurcharge = hasToolSurcharge(props.other)
+  const isChannelMonitor =
+    props.other?.admin_info?.channel_monitor?.quota_charged === false
+
+  if (isChannelMonitor) {
+    return (
+      <div className='flex flex-col items-start gap-0.5'>
+        <QuotaBadge quota={props.quota} />
+        <span className='text-muted-foreground text-[11px] leading-none'>
+          {t('No user quota deduction')}
+        </span>
+      </div>
+    )
+  }
 
   if (!isSubscription && !showToolSurcharge) {
     return (

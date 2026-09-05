@@ -49,6 +49,7 @@ import {
   UserCog,
   Info,
   LogIn,
+  Activity,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -63,6 +64,7 @@ import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
+import { LOG_TYPE_ENUM } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import {
   parseLogOther,
@@ -73,16 +75,23 @@ import {
   hasAnyCacheTokens,
   isViolationFeeLog,
   getFirstResponseTimeColor,
+  getCacheUsageMetrics,
   getResponseTimeColor,
   getReasoningEffortVariant,
   renderAuditContent,
 } from '../../lib/format'
 import {
   getLogTypeConfig,
+  isDisplayableLogType,
   isPerCallBilling,
   isTimingLogType,
 } from '../../lib/utils'
-import { USAGE_BILLING_PATH, type LogOtherData } from '../../types'
+import {
+  USAGE_BILLING_PATH,
+  type ChannelMonitorLogInfo,
+  type LogOtherData,
+} from '../../types'
+import { CacheHitRateBadge } from '../cache-hit-rate-badge'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
 // to its i18n label key for display in the audit details.
@@ -220,6 +229,7 @@ function BillingBreakdown(props: {
   log: UsageLog
   other: LogOtherData
   isAdmin: boolean
+  isEstimate?: boolean
 }) {
   const { t } = useTranslation()
   const { log, other, isAdmin } = props
@@ -389,7 +399,7 @@ function BillingBreakdown(props: {
   }
 
   rows.push({
-    label: t('Total Cost'),
+    label: props.isEstimate ? t('Estimated cost') : t('Total Cost'),
     value: formatLogQuota(log.quota),
   })
 
@@ -404,21 +414,100 @@ function BillingBreakdown(props: {
   )
 }
 
+function ChannelMonitorDetails(props: {
+  info: ChannelMonitorLogInfo
+  quota: number
+}) {
+  const { t } = useTranslation()
+  let statusLabel = t('Failed')
+  let statusVariant: StatusBadgeProps['variant'] = 'red'
+  if (props.info.status === 'operational') {
+    statusLabel = t('Operational')
+    statusVariant = 'green'
+  } else if (props.info.status === 'degraded') {
+    statusLabel = t('Degraded')
+    statusVariant = 'amber'
+  } else if (props.info.status === 'error') {
+    statusLabel = t('Monitor error')
+  }
+
+  return (
+    <DetailSection
+      icon={<Activity className='size-3.5' aria-hidden='true' />}
+      iconTone={props.info.success ? 'success' : 'destructive'}
+      label={t('Channel Monitor Details')}
+      variant={props.info.success ? 'default' : 'danger'}
+    >
+      <DetailRow
+        label={t('Status')}
+        value={
+          <StatusBadge
+            label={statusLabel}
+            variant={statusVariant}
+            size='sm'
+            copyable={false}
+          />
+        }
+      />
+      <DetailRow
+        label={t('Priority')}
+        value={String(props.info.priority)}
+        mono
+      />
+      <DetailRow
+        label={t('Attempt')}
+        value={`#${props.info.attempt_order}`}
+        mono
+      />
+      <DetailRow
+        label={t('Monitor ID')}
+        value={String(props.info.monitor_id)}
+        mono
+      />
+      <DetailRow label={t('Run ID')} value={String(props.info.run_id)} mono />
+      <DetailRow
+        label={t('Attempt ID')}
+        value={String(props.info.attempt_id)}
+        mono
+      />
+      <DetailRow
+        label={t('Response Time')}
+        value={formatUseTime(props.info.response_time_ms / 1000)}
+        mono
+      />
+      <DetailRow
+        label={t('Estimated cost')}
+        value={formatLogQuota(props.quota)}
+        mono
+      />
+      <DetailRow label={t('User quota')} value={t('Not deducted')} />
+      {props.info.error && (
+        <DetailRow label={t('Error')} value={props.info.error} />
+      )}
+      <p className='text-muted-foreground pt-1 text-[11px] leading-relaxed'>
+        {t('The upstream provider may still bill this monitoring request.')}
+      </p>
+    </DetailSection>
+  )
+}
+
 function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
   const { t } = useTranslation()
   const { log, other } = props
 
   const promptTokens = log.prompt_tokens || 0
   const completionTokens = log.completion_tokens || 0
-  const cacheRead = other.cache_tokens || 0
-  const cacheWrite = other.cache_creation_tokens || 0
+  const cacheMetrics = getCacheUsageMetrics(log, other)
+  const cacheRead = cacheMetrics.cacheReadTokens
+  const cacheWrite = cacheMetrics.cacheWriteTokens
   const cacheWrite5m = other.cache_creation_tokens_5m || 0
   const cacheWrite1h = other.cache_creation_tokens_1h || 0
-  const hasTokens = promptTokens > 0 || completionTokens > 0
+  const hasTokens =
+    promptTokens > 0 || completionTokens > 0 || cacheRead > 0 || cacheWrite > 0
 
   if (!hasTokens) return null
 
-  const rows: Array<{ label: string; value: string }> = []
+  const rows: Array<{ label: string; value: React.ReactNode }> = []
 
   rows.push({ label: t('Input Tokens'), value: promptTokens.toLocaleString() })
   rows.push({
@@ -454,6 +543,13 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
     })
   }
 
+  if (cacheMetrics.hitRate != null) {
+    rows.push({
+      label: t('Cache Hit Rate'),
+      value: <CacheHitRateBadge hitRate={cacheMetrics.hitRate} />,
+    })
+  }
+
   if (other.image && other.image_output) {
     rows.push({
       label: t('Image Tokens'),
@@ -480,8 +576,10 @@ interface DetailsDialogProps {
 export function DetailsDialog(props: DetailsDialogProps) {
   const { t } = useTranslation()
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
-  const details = props.log.content ?? ''
   const other = parseLogOther(props.log.other)
+  const isChannelMonitor = props.log.type === LOG_TYPE_ENUM.CHANNEL_MONITOR
+  const monitorInfo = other?.admin_info?.channel_monitor
+  const details = isChannelMonitor ? '' : (props.log.content ?? '')
   const typeConfig = getLogTypeConfig(props.log.type)
 
   const isViolation = isViolationFeeLog(other)
@@ -489,14 +587,19 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const isConsume = props.log.type === 2
   const isTopup = props.log.type === 1
   const isManage = props.log.type === 3
+  const hasBillingDetails =
+    isConsume || (isChannelMonitor && monitorInfo?.success === true)
   const isSubscription = other?.billing_source === 'subscription'
   const isTieredBilling =
-    isConsume &&
+    hasBillingDetails &&
     !isViolation &&
     other?.billing_mode === 'tiered_expr' &&
     !!other?.expr_b64
   const hasAudioTokens = other?.ws || other?.audio
   const showTiming = isTimingLogType(props.log.type)
+  const responseTimeSeconds = monitorInfo
+    ? monitorInfo.response_time_ms / 1000
+    : props.log.use_time
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
@@ -701,7 +804,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
             />
           )}
 
-          {showTiming && props.log.use_time > 0 && (
+          {showTiming && responseTimeSeconds > 0 && (
             <DetailRow
               label={t('Response Time')}
               value={
@@ -710,14 +813,15 @@ export function DetailsDialog(props: DetailsDialogProps) {
                     'font-medium',
                     timingTextColorClass(
                       getResponseTimeColor(
-                        props.log.use_time,
+                        responseTimeSeconds,
                         props.log.completion_tokens
                       )
                     )
                   )}
                 >
-                  {formatUseTime(props.log.use_time)}
-                  {props.log.is_stream &&
+                  {formatUseTime(responseTimeSeconds)}
+                  {!isChannelMonitor &&
+                    props.log.is_stream &&
                     other?.frt != null &&
                     other.frt > 0 && (
                       <span
@@ -737,6 +841,10 @@ export function DetailsDialog(props: DetailsDialogProps) {
             />
           )}
         </div>
+
+        {props.isAdmin && monitorInfo && (
+          <ChannelMonitorDetails info={monitorInfo} quota={props.log.quota} />
+        )}
 
         {/* Request conversion (admin only, not for refund) */}
         {showConversion && (
@@ -1058,16 +1166,17 @@ export function DetailsDialog(props: DetailsDialogProps) {
         )}
 
         {/* Token breakdown (for consume/error types with token data) */}
-        {isDisplayableType(props.log.type) && other && (
+        {isDisplayableLogType(props.log.type) && other && (
           <TokenBreakdown log={props.log} other={other} />
         )}
 
         {/* Billing breakdown (consume type) */}
-        {isConsume && other && !isViolation && (
+        {hasBillingDetails && other && !isViolation && (
           <BillingBreakdown
             log={props.log}
             other={other}
             isAdmin={props.isAdmin}
+            isEstimate={isChannelMonitor}
           />
         )}
 
@@ -1087,6 +1196,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
         {/* Admin billing mode indicator for non-consume */}
         {props.isAdmin &&
           !isConsume &&
+          !isChannelMonitor &&
           props.log.type !== 6 &&
           other?.admin_info && (
             <DetailRow
@@ -1253,8 +1363,4 @@ export function DetailsDialog(props: DetailsDialogProps) {
       </div>
     </Dialog>
   )
-}
-
-function isDisplayableType(type: number): boolean {
-  return [0, 2, 5, 6].includes(type)
 }

@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 
@@ -16,11 +17,13 @@ const (
 	SystemTaskStatusSucceeded SystemTaskStatus = "succeeded"
 	SystemTaskStatusFailed    SystemTaskStatus = "failed"
 
-	SystemTaskTypeLogCleanup     = "log_cleanup"
-	SystemTaskTypeChannelTest    = "channel_test"
-	SystemTaskTypeModelUpdate    = "model_update"
-	SystemTaskTypeMidjourneyPoll = "midjourney_poll"
-	SystemTaskTypeAsyncTaskPoll  = "async_task_poll"
+	SystemTaskTypeLogCleanup            = "log_cleanup"
+	SystemTaskTypeChannelTest           = "channel_test"
+	SystemTaskTypeModelUpdate           = "model_update"
+	SystemTaskTypeMidjourneyPoll        = "midjourney_poll"
+	SystemTaskTypeAsyncTaskPoll         = "async_task_poll"
+	SystemTaskTypeChannelMonitor        = "channel_monitor"
+	SystemTaskTypeChannelMonitorCleanup = "channel_monitor_cleanup"
 )
 
 var ErrSystemTaskLockLost = errors.New("system task lock lost")
@@ -90,6 +93,25 @@ func GenerateSystemTaskID() (string, error) {
 }
 
 func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, error) {
+	return CreateSystemTaskWithActiveKey(taskType, taskType, payload, state)
+}
+
+// CreateSystemTaskWithActiveKey creates a task whose active-row deduplication
+// scope can be narrower than its handler type. Tasks with the same type still
+// share one execution lease, while different active keys may wait in the queue.
+func CreateSystemTaskWithActiveKey(taskType string, activeKey string, payload any, state any) (*SystemTask, error) {
+	if taskType == "" {
+		return nil, errors.New("system task type is required")
+	}
+	if utf8.RuneCountInString(taskType) > 64 {
+		return nil, errors.New("system task type must not exceed 64 characters")
+	}
+	if activeKey == "" {
+		return nil, errors.New("system task active key is required")
+	}
+	if utf8.RuneCountInString(activeKey) > 64 {
+		return nil, errors.New("system task active key must not exceed 64 characters")
+	}
 	taskID, err := GenerateSystemTaskID()
 	if err != nil {
 		return nil, err
@@ -107,7 +129,7 @@ func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, err
 		TaskID:    taskID,
 		Type:      taskType,
 		Status:    SystemTaskStatusPending,
-		ActiveKey: &taskType,
+		ActiveKey: &activeKey,
 		Payload:   payloadText,
 		State:     stateText,
 	}
@@ -132,6 +154,20 @@ func GetSystemTaskByTaskID(taskID string) (*SystemTask, error) {
 func GetActiveSystemTask(taskType string) (*SystemTask, error) {
 	var task SystemTask
 	err := DB.Where("type = ? AND status IN ?", taskType, activeSystemTaskStatuses()).
+		Order("id desc").
+		First(&task).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &task, nil
+}
+
+func GetActiveSystemTaskByActiveKey(activeKey string) (*SystemTask, error) {
+	var task SystemTask
+	err := DB.Where("active_key = ? AND status IN ?", activeKey, activeSystemTaskStatuses()).
 		Order("id desc").
 		First(&task).Error
 	if err != nil {

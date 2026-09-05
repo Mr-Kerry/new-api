@@ -37,10 +37,21 @@ import {
 import type { Channel } from '../types'
 
 type UseChannelMutateFormParams = {
-  currentRow?: Channel | null
-  isEditing: boolean
   isMultiKeyChannel: boolean
-  onSuccess: () => void
+  isSessionCurrent: (session: number) => boolean
+  onSuccess: (result: { channelId?: number; session: number }) => void
+}
+
+type ChannelMutationVariables = {
+  channelId?: number
+  data: ChannelFormValues
+  session: number
+}
+
+type ChannelMutationResult = {
+  channelId?: number
+  messageKey: string
+  session: number
 }
 
 const SENSITIVE_UPDATE_FIELDS = [
@@ -90,12 +101,13 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
   )
 
   return useMutation({
-    mutationFn: async (data: ChannelFormValues): Promise<string> => {
-      if (props.isEditing && props.currentRow) {
-        const payload = transformFormDataToUpdatePayload(
-          data,
-          props.currentRow.id
-        )
+    mutationFn: async ({
+      channelId,
+      data,
+      session,
+    }: ChannelMutationVariables): Promise<ChannelMutationResult> => {
+      if (channelId !== undefined) {
+        const payload = transformFormDataToUpdatePayload(data, channelId)
         if (!data.key?.trim()) {
           delete payload.key
         }
@@ -115,14 +127,15 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
               }
             : payload
 
-        const response = await updateChannel(
-          props.currentRow.id,
-          payloadWithKeyMode
-        )
+        const response = await updateChannel(channelId, payloadWithKeyMode)
         if (!response.success) {
           throw new Error(response.message || t(ERROR_MESSAGES.UPDATE_FAILED))
         }
-        return SUCCESS_MESSAGES.UPDATED
+        return {
+          channelId,
+          messageKey: SUCCESS_MESSAGES.UPDATED,
+          session,
+        }
       }
 
       const payload = transformFormDataToCreatePayload(data)
@@ -130,14 +143,20 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
       if (!response.success) {
         throw new Error(response.message || t(ERROR_MESSAGES.CREATE_FAILED))
       }
-      return SUCCESS_MESSAGES.CREATED
+      return { messageKey: SUCCESS_MESSAGES.CREATED, session }
     },
-    onSuccess: (messageKey) => {
-      toast.success(t(messageKey))
-      props.onSuccess()
+    onSuccess: (result) => {
+      if (props.isSessionCurrent(result.session)) {
+        toast.success(t(result.messageKey))
+      }
+      props.onSuccess({ channelId: result.channelId, session: result.session })
     },
-    onError: (error: unknown) => {
-      toast.error(getErrorMessage(error) || t(ERROR_MESSAGES.CREATE_FAILED))
+    onError: (error: unknown, variables) => {
+      if (!props.isSessionCurrent(variables.session)) return
+      const fallback = variables.channelId
+        ? ERROR_MESSAGES.UPDATE_FAILED
+        : ERROR_MESSAGES.CREATE_FAILED
+      toast.error(getErrorMessage(error) || t(fallback))
     },
   })
 }

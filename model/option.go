@@ -220,7 +220,7 @@ func normalizeOptionValue(key string, value string) (string, error) {
 		return value, operation_setting.ValidateToolPricesJSON(value)
 	}
 	if key == operation_setting.ChannelTestConcurrencyOptionKey {
-		return operation_setting.ValidateChannelTestConcurrency(value)
+		return value, operation_setting.ValidateChannelTestConcurrency(value)
 	}
 	if key == "MaxTokenAutoGroups" {
 		return value, setting.ValidateMaxTokenAutoGroups(value)

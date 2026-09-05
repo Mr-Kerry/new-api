@@ -59,6 +59,7 @@ interface NotificationPopoverProps {
   activeTab: 'notice' | 'announcements'
   onTabChange: (tab: 'notice' | 'announcements') => void
   notice: string
+  noticeAnnouncement?: AnnouncementItem | null
   announcements: AnnouncementItem[]
   loading: boolean
   className?: string
@@ -180,10 +181,12 @@ function EmptyState({
  */
 function NoticeContent({
   notice,
+  noticeAnnouncement,
   loading,
   t,
 }: {
   notice: string
+  noticeAnnouncement?: AnnouncementItem | null
   loading: boolean
   t: TFunction
 }) {
@@ -206,6 +209,12 @@ function NoticeContent({
   return (
     <ScrollArea className='h-[min(52vh,28rem)] pr-3'>
       <RichContent breaks content={notice} />
+      {noticeAnnouncement?.publishDate ? (
+        <div className='text-muted-foreground mt-3 text-xs'>
+          {getRelativeTime(noticeAnnouncement.publishDate, t)} •{' '}
+          {formatDateTimeObject(new Date(noticeAnnouncement.publishDate))}
+        </div>
+      ) : null}
     </ScrollArea>
   )
 }
@@ -297,6 +306,7 @@ export function NotificationPopover({
   activeTab,
   onTabChange,
   notice,
+  noticeAnnouncement,
   announcements,
   loading,
   className,
@@ -353,7 +363,12 @@ export function NotificationPopover({
           </TabsList>
 
           <TabsContent value='notice' className='mt-2'>
-            <NoticeContent notice={notice} loading={loading} t={t} />
+            <NoticeContent
+              notice={notice}
+              noticeAnnouncement={noticeAnnouncement}
+              loading={loading}
+              t={t}
+            />
           </TabsContent>
 
           <TabsContent value='announcements' className='mt-2'>

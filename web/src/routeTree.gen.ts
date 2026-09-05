@@ -36,6 +36,8 @@ import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as authUserResetRouteImport } from './routes/(auth)/user/reset'
+import { Route as AuthenticatedChannelMonitorIndexRouteImport } from './routes/_authenticated/channel-monitor/index'
+import { Route as AuthenticatedChannelMonitorSettingsRouteImport } from './routes/_authenticated/channel-monitor/settings'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
 import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
@@ -204,6 +206,18 @@ const authUserResetRoute = authUserResetRouteImport.update({
   path: '/user/reset',
   getParentRoute: () => authRouteRoute,
 } as any)
+const AuthenticatedChannelMonitorIndexRoute =
+  AuthenticatedChannelMonitorIndexRouteImport.update({
+    id: '/channel-monitor/',
+    path: '/channel-monitor/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedChannelMonitorSettingsRoute =
+  AuthenticatedChannelMonitorSettingsRouteImport.update({
+    id: '/channel-monitor/settings',
+    path: '/channel-monitor/settings',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedChannelsIndexRoute =
   AuthenticatedChannelsIndexRouteImport.update({
     id: '/channels/',
@@ -425,11 +439,13 @@ export interface FileRoutesByFullPath {
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/user/reset': typeof authUserResetRoute
+  '/channel-monitor/settings': typeof AuthenticatedChannelMonitorSettingsRoute
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
+  '/channel-monitor/': typeof AuthenticatedChannelMonitorIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
@@ -484,11 +500,13 @@ export interface FileRoutesByTo {
   '/rankings': typeof RankingsIndexRoute
   '/setup': typeof SetupIndexRoute
   '/user/reset': typeof authUserResetRoute
+  '/channel-monitor/settings': typeof AuthenticatedChannelMonitorSettingsRoute
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
+  '/channel-monitor': typeof AuthenticatedChannelMonitorIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
@@ -547,11 +565,13 @@ export interface FileRoutesById {
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/(auth)/user/reset': typeof authUserResetRoute
+  '/_authenticated/channel-monitor/settings': typeof AuthenticatedChannelMonitorSettingsRoute
   '/_authenticated/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/_authenticated/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
+  '/_authenticated/channel-monitor/': typeof AuthenticatedChannelMonitorIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
@@ -609,11 +629,13 @@ export interface FileRouteTypes {
     | '/rankings/'
     | '/setup/'
     | '/user/reset'
+    | '/channel-monitor/settings'
     | '/chat/$chatId'
     | '/dashboard/$section'
     | '/errors/$error'
     | '/models/$section'
     | '/usage-logs/$section'
+    | '/channel-monitor/'
     | '/channels/'
     | '/dashboard/'
     | '/keys/'
@@ -668,11 +690,13 @@ export interface FileRouteTypes {
     | '/rankings'
     | '/setup'
     | '/user/reset'
+    | '/channel-monitor/settings'
     | '/chat/$chatId'
     | '/dashboard/$section'
     | '/errors/$error'
     | '/models/$section'
     | '/usage-logs/$section'
+    | '/channel-monitor'
     | '/channels'
     | '/dashboard'
     | '/keys'
@@ -730,11 +754,13 @@ export interface FileRouteTypes {
     | '/rankings/'
     | '/setup/'
     | '/(auth)/user/reset'
+    | '/_authenticated/channel-monitor/settings'
     | '/_authenticated/chat/$chatId'
     | '/_authenticated/dashboard/$section'
     | '/_authenticated/errors/$error'
     | '/_authenticated/models/$section'
     | '/_authenticated/usage-logs/$section'
+    | '/_authenticated/channel-monitor/'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/keys/'
@@ -919,18 +945,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedRadarRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/top-store': {
-      id: '/_authenticated/top-store'
-      path: '/top-store'
-      fullPath: '/top-store'
-      preLoaderRoute: typeof AuthenticatedTopStoreRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
     '/_authenticated/system-settings': {
       id: '/_authenticated/system-settings'
       path: '/system-settings'
       fullPath: '/system-settings'
       preLoaderRoute: typeof AuthenticatedSystemSettingsRouteRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/top-store': {
+      id: '/_authenticated/top-store'
+      path: '/top-store'
+      fullPath: '/top-store'
+      preLoaderRoute: typeof AuthenticatedTopStoreRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/about/': {
@@ -974,6 +1000,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/user/reset'
       preLoaderRoute: typeof authUserResetRouteImport
       parentRoute: typeof authRouteRoute
+    }
+    '/_authenticated/channel-monitor/': {
+      id: '/_authenticated/channel-monitor/'
+      path: '/channel-monitor'
+      fullPath: '/channel-monitor/'
+      preLoaderRoute: typeof AuthenticatedChannelMonitorIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/channel-monitor/settings': {
+      id: '/_authenticated/channel-monitor/settings'
+      path: '/channel-monitor/settings'
+      fullPath: '/channel-monitor/settings'
+      preLoaderRoute: typeof AuthenticatedChannelMonitorSettingsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/channels/': {
       id: '/_authenticated/channels/'
@@ -1297,11 +1337,13 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedChat2linkRoute: typeof AuthenticatedChat2linkRoute
   AuthenticatedRadarRoute: typeof AuthenticatedRadarRoute
   AuthenticatedTopStoreRoute: typeof AuthenticatedTopStoreRoute
+  AuthenticatedChannelMonitorSettingsRoute: typeof AuthenticatedChannelMonitorSettingsRoute
   AuthenticatedChatChatIdRoute: typeof AuthenticatedChatChatIdRoute
   AuthenticatedDashboardSectionRoute: typeof AuthenticatedDashboardSectionRoute
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
   AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
+  AuthenticatedChannelMonitorIndexRoute: typeof AuthenticatedChannelMonitorIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
@@ -1322,11 +1364,14 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedChat2linkRoute: AuthenticatedChat2linkRoute,
   AuthenticatedRadarRoute: AuthenticatedRadarRoute,
   AuthenticatedTopStoreRoute: AuthenticatedTopStoreRoute,
+  AuthenticatedChannelMonitorSettingsRoute:
+    AuthenticatedChannelMonitorSettingsRoute,
   AuthenticatedChatChatIdRoute: AuthenticatedChatChatIdRoute,
   AuthenticatedDashboardSectionRoute: AuthenticatedDashboardSectionRoute,
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
   AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
+  AuthenticatedChannelMonitorIndexRoute: AuthenticatedChannelMonitorIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,

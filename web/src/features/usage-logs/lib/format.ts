@@ -313,6 +313,139 @@ export interface TieredBillingSummary {
   priceEntries: Array<{ field: string; shortLabel: string; price: number }>
 }
 
+export interface CacheUsageMetrics {
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  totalInputTokens: number | null
+  hitRate: number | null
+}
+
+function toNonNegativeFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : null
+}
+
+function hasInvalidTokenValue(value: unknown): boolean {
+  return value != null && toNonNegativeFiniteNumber(value) == null
+}
+
+function getCacheWriteTokens(other: LogOtherData): {
+  tokens: number
+  valid: boolean
+} {
+  if (hasInvalidTokenValue(other.cache_write_tokens)) {
+    return { tokens: 0, valid: false }
+  }
+
+  const direct = toNonNegativeFiniteNumber(other.cache_write_tokens)
+  if (direct != null && direct > 0) {
+    return { tokens: direct, valid: true }
+  }
+
+  const legacyValues = [
+    other.cache_creation_tokens,
+    other.cache_creation_tokens_5m,
+    other.cache_creation_tokens_1h,
+  ]
+  if (legacyValues.some(hasInvalidTokenValue)) {
+    return { tokens: 0, valid: false }
+  }
+
+  const aggregate = toNonNegativeFiniteNumber(other.cache_creation_tokens) ?? 0
+  const cacheWrite5m =
+    toNonNegativeFiniteNumber(other.cache_creation_tokens_5m) ?? 0
+  const cacheWrite1h =
+    toNonNegativeFiniteNumber(other.cache_creation_tokens_1h) ?? 0
+  const splitTotal = cacheWrite5m + cacheWrite1h
+
+  if (!Number.isFinite(splitTotal)) {
+    return { tokens: 0, valid: false }
+  }
+
+  return { tokens: Math.max(aggregate, splitTotal), valid: true }
+}
+
+/**
+ * Normalize cache usage from both current and legacy usage-log payloads, then
+ * calculate the cache-read share of total input tokens.
+ *
+ * Anthropic's prompt_tokens field contains only uncached input, so cache reads
+ * and writes are added to its denominator. OpenAI/Gemini prompt_tokens already
+ * represent total input; input_tokens_total takes precedence when present.
+ */
+export function getCacheUsageMetrics(
+  log: Pick<UsageLog, 'prompt_tokens'>,
+  other: LogOtherData | null | undefined
+): CacheUsageMetrics {
+  const cacheReadValid = !hasInvalidTokenValue(other?.cache_tokens)
+  const cacheReadTokens = toNonNegativeFiniteNumber(other?.cache_tokens) ?? 0
+  const cacheWrite = other
+    ? getCacheWriteTokens(other)
+    : { tokens: 0, valid: true }
+  const cacheWriteTokens = cacheWrite.tokens
+  const promptTokensValid = !hasInvalidTokenValue(log.prompt_tokens)
+  const promptTokens = toNonNegativeFiniteNumber(log.prompt_tokens) ?? 0
+  const explicitInputTokensPresent = other?.input_tokens_total != null
+  const explicitInputTokensValid = !hasInvalidTokenValue(
+    other?.input_tokens_total
+  )
+  const explicitInputTokens = toNonNegativeFiniteNumber(
+    other?.input_tokens_total
+  )
+  const usageSemantic =
+    typeof other?.usage_semantic === 'string' ? other.usage_semantic : ''
+  const isAnthropic =
+    other?.claude === true || usageSemantic.trim().toLowerCase() === 'anthropic'
+
+  let totalInputTokens: number | null = null
+  if (explicitInputTokensPresent) {
+    if (explicitInputTokens != null && explicitInputTokens > 0) {
+      totalInputTokens = explicitInputTokens
+    }
+  } else {
+    const calculatedTotal = isAnthropic
+      ? promptTokens + cacheReadTokens + cacheWriteTokens
+      : promptTokens
+    if (Number.isFinite(calculatedTotal) && calculatedTotal > 0) {
+      totalInputTokens = calculatedTotal
+    }
+  }
+
+  const hasCacheUsage = cacheReadTokens > 0 || cacheWriteTokens > 0
+  const tokenDataValid =
+    cacheReadValid &&
+    cacheWrite.valid &&
+    promptTokensValid &&
+    explicitInputTokensValid
+  const hitRate =
+    tokenDataValid &&
+    hasCacheUsage &&
+    totalInputTokens != null &&
+    totalInputTokens > 0 &&
+    cacheReadTokens <= totalInputTokens
+      ? Math.min(100, (cacheReadTokens / totalInputTokens) * 100)
+      : null
+
+  return {
+    cacheReadTokens,
+    cacheWriteTokens,
+    totalInputTokens,
+    hitRate,
+  }
+}
+
+export function getCacheHitRateColor(
+  hitRate: number
+): 'success' | 'warning' | 'danger' {
+  if (!Number.isFinite(hitRate) || hitRate < 0 || hitRate > 100) {
+    return 'danger'
+  }
+  if (Number.isFinite(hitRate) && hitRate >= 80) return 'success'
+  if (Number.isFinite(hitRate) && hitRate >= 30) return 'warning'
+  return 'danger'
+}
+
 /**
  * Whether the request payload reports any cache-related token usage. Used to
  * suppress cache pricing rows from the tiered breakdown when the request did
@@ -321,13 +454,8 @@ export interface TieredBillingSummary {
 export function hasAnyCacheTokens(
   other: LogOtherData | null | undefined
 ): boolean {
-  if (!other) return false
-  return (
-    (other.cache_tokens || 0) > 0 ||
-    (other.cache_creation_tokens || 0) > 0 ||
-    (other.cache_creation_tokens_5m || 0) > 0 ||
-    (other.cache_creation_tokens_1h || 0) > 0
-  )
+  const metrics = getCacheUsageMetrics({ prompt_tokens: 0 }, other)
+  return metrics.cacheReadTokens > 0 || metrics.cacheWriteTokens > 0
 }
 
 export function getTieredBillingSummary(

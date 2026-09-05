@@ -29,7 +29,7 @@ function RadarRoute() {
   const visible = useIsSidebarModuleVisible('/radar')
 
   if (!visible) {
-    return <Navigate to='/dashboard/overview' replace />
+    return <Navigate to='/dashboard' replace />
   }
 
   return <CodexRadar />

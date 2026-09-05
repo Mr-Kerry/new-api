@@ -19,9 +19,61 @@ import (
 // service.StartSystemTaskRunner.
 func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(channelTestHandler{})
+	service.RegisterSystemTaskHandler(channelMonitorHandler{})
+	service.RegisterSystemTaskHandler(channelMonitorCleanupHandler{})
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
+}
+
+// channelMonitorHandler periodically evaluates all due group/model targets.
+// A manual run carries a monitor id and bypasses that target's interval.
+type channelMonitorHandler struct{}
+
+func (channelMonitorHandler) Type() string { return model.SystemTaskTypeChannelMonitor }
+
+func (channelMonitorHandler) Enabled() bool {
+	return model.HasDueChannelMonitors(common.GetTimestamp())
+}
+
+func (channelMonitorHandler) Interval() time.Duration { return 15 * time.Second }
+
+func (channelMonitorHandler) NewPayload() any { return nil }
+
+func (channelMonitorHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	payload := channelMonitorTaskPayload{}
+	if err := task.DecodePayload(&payload); err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	processed, err := runChannelMonitorTask(ctx, payload)
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, map[string]any{"processed": processed}, err)
+		return
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, map[string]any{"processed": processed}, nil)
+}
+
+// channelMonitorCleanupHandler keeps monitor history bounded even when no
+// target is due for an active probe. It is intentionally independent from the
+// probe handler because passive traffic can keep every target non-due for a
+// long time.
+type channelMonitorCleanupHandler struct{}
+
+func (channelMonitorCleanupHandler) Type() string { return model.SystemTaskTypeChannelMonitorCleanup }
+
+func (channelMonitorCleanupHandler) Enabled() bool { return true }
+
+func (channelMonitorCleanupHandler) Interval() time.Duration { return 24 * time.Hour }
+
+func (channelMonitorCleanupHandler) NewPayload() any { return nil }
+
+func (channelMonitorCleanupHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	if _, err := model.CleanupChannelMonitorHistoryContext(ctx, common.GetTimestamp()); err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, nil, nil)
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and

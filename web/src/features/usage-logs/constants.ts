@@ -60,6 +60,7 @@ export const LOG_TYPE_ENUM = {
   ERROR: 5,
   REFUND: 6,
   LOGIN: 7,
+  CHANNEL_MONITOR: 8,
 } as const
 
 /**
@@ -98,6 +99,7 @@ export const LOG_TYPES = [
   { value: 5, label: 'Error', color: 'red' },
   { value: 6, label: 'Refund', color: 'blue' },
   { value: 7, label: 'Login', color: 'teal' },
+  { value: 8, label: 'Channel Monitor', color: 'amber' },
 ] as const
 
 /**
@@ -114,6 +116,10 @@ export const LOG_TYPE_FILTERS = [
     })
   ),
 ] as const
+
+export const USER_LOG_TYPE_FILTERS = LOG_TYPE_FILTERS.filter(
+  (type) => type.value !== String(LOG_TYPE_ENUM.CHANNEL_MONITOR)
+)
 
 // ============================================================================
 // Drawing Logs (MjProxy) Constants
@@ -346,9 +352,9 @@ export const LOG_CATEGORY_LABELS: Record<LogCategory, string> = {
 /**
  * Log types that are displayable (have detailed info)
  */
-export const DISPLAYABLE_LOG_TYPES = [0, 2, 5, 6] as const
+export const DISPLAYABLE_LOG_TYPES = [0, 2, 5, 6, 8] as const
 
 /**
  * Log types that show timing info
  */
-export const TIMING_LOG_TYPES = [2, 5] as const
+export const TIMING_LOG_TYPES = [2, 5, 8] as const

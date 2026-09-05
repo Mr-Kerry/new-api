@@ -171,16 +171,22 @@ function isCodexCredential(value: string | undefined): boolean {
   }
 }
 
-function isVertexJsonKey(value: string | undefined): boolean {
+type VertexCredentialShape = 'empty' | 'object' | 'array' | 'invalid'
+
+function getVertexCredentialShape(
+  value: string | undefined
+): VertexCredentialShape {
   try {
     const parsed = parseOptionalJson(value)
-    if (parsed === undefined) return true
+    if (parsed === undefined) return 'empty'
     if (Array.isArray(parsed)) {
-      return parsed.every((item) => isJsonObjectValue(item))
+      return parsed.length > 0 && parsed.every(isJsonObjectValue)
+        ? 'array'
+        : 'invalid'
     }
-    return isJsonObjectValue(parsed)
+    return isJsonObjectValue(parsed) ? 'object' : 'invalid'
   } catch {
-    return false
+    return 'invalid'
   }
 }
 
@@ -196,94 +202,119 @@ function addRequiredIssue(
   })
 }
 
-export const channelFormSchema = z
-  .object({
-    name: z.string().min(1, ERROR_MESSAGES.REQUIRED_NAME),
-    type: z.number().min(0, ERROR_MESSAGES.REQUIRED_TYPE),
-    base_url: z.string().optional(),
-    key: z.string(),
-    openai_organization: z.string().optional(),
-    models: z.string().min(1, ERROR_MESSAGES.REQUIRED_MODELS),
-    group: z.array(z.string()).min(1, ERROR_MESSAGES.REQUIRED_GROUP),
-    model_mapping: z
-      .string()
-      .optional()
-      .refine(
-        isOptionalModelMapping,
-        'Model mapping must be a JSON object with string values'
-      ),
-    priority: z.number().optional(),
-    weight: z.number().optional(),
-    test_model: z.string().optional(),
-    auto_ban: z.number().optional(),
-    status: z.number(),
-    status_code_mapping: z
-      .string()
-      .optional()
-      .refine(
-        isOptionalStatusCodeMapping,
-        'Status code mapping must use valid HTTP status codes'
-      ),
-    tag: z.string().optional(),
-    remark: z
-      .string()
-      .max(255, 'Remark must be less than 255 characters')
-      .optional(),
-    setting: z
-      .string()
-      .optional()
-      .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
-    param_override: z
-      .string()
-      .optional()
-      .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
-    header_override: z
-      .string()
-      .optional()
-      .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
-    settings: z
-      .string()
-      .optional()
-      .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
-    advanced_custom: z.string().optional(),
-    other: z.string().optional(),
-    // Multi-key options (not sent to backend directly)
-    multi_key_mode: z.enum(['single', 'batch', 'multi_to_single']).optional(),
-    multi_key_type: z.enum(['random', 'polling']).optional(),
-    batch_add_set_key_prefix_2_name: z.boolean().optional(),
-    key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
-    // Channel extra settings (stored in setting JSON, not sent directly)
-    force_format: z.boolean().optional(),
-    thinking_to_content: z.boolean().optional(),
-    proxy: z
-      .string()
-      .optional()
-      .refine(isOptionalProxyURL, ERROR_MESSAGES.INVALID_PROXY),
-    http_protocol: z.enum(['auto', 'http1']).optional(),
-    http2_connection_shards: z.number().int().optional(),
-    pass_through_body_enabled: z.boolean().optional(),
-    system_prompt: z.string().optional(),
-    system_prompt_override: z.boolean().optional(),
-    // Type-specific settings (stored in settings JSON)
-    is_enterprise_account: z.boolean().optional(), // OpenRouter specific
-    vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
-    aws_key_type: z.enum(['ak_sk', 'api_key']).optional(), // AWS specific
-    azure_responses_version: z.string().optional(), // Azure specific
-    // Field passthrough controls (stored in settings JSON)
-    allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic
-    disable_store: z.boolean().optional(), // OpenAI only
-    allow_safety_identifier: z.boolean().optional(), // OpenAI only
-    allow_include_obfuscation: z.boolean().optional(), // OpenAI: include usage obfuscation
-    allow_inference_geo: z.boolean().optional(), // OpenAI/Anthropic: inference geography
-    allow_speed: z.boolean().optional(), // Anthropic: speed mode control
-    claude_beta_query: z.boolean().optional(), // Anthropic: beta query passthrough
-    disable_task_polling_sleep: z.boolean().optional(),
-    // Upstream model update settings (stored in settings JSON)
-    upstream_model_update_check_enabled: z.boolean().optional(),
-    upstream_model_update_auto_sync_enabled: z.boolean().optional(),
-    upstream_model_update_ignored_models: z.string().optional(),
-  })
-  .superRefine((data, ctx) => {
+const channelFormBaseSchema = z.object({
+  name: z.string().trim().min(1, ERROR_MESSAGES.REQUIRED_NAME),
+  type: z.number().int().min(1, ERROR_MESSAGES.REQUIRED_TYPE),
+  base_url: z.string().optional(),
+  key: z.string(),
+  openai_organization: z.string().optional(),
+  models: z
+    .string()
+    .trim()
+    .refine(
+      (value) => value.split(',').some((model) => model.trim().length > 0),
+      ERROR_MESSAGES.REQUIRED_MODELS
+    ),
+  group: z
+    .array(z.string().trim().min(1, ERROR_MESSAGES.REQUIRED_GROUP))
+    .min(1, ERROR_MESSAGES.REQUIRED_GROUP),
+  model_mapping: z
+    .string()
+    .optional()
+    .refine(
+      isOptionalModelMapping,
+      'Model mapping must be a JSON object with string values'
+    ),
+  priority: z
+    .number()
+    .int()
+    .min(Number.MIN_SAFE_INTEGER)
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional(),
+  weight: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  test_model: z.string().optional(),
+  auto_ban: z.number().int().min(0).max(1).optional(),
+  status: z.number().int().min(0).max(3),
+  status_code_mapping: z
+    .string()
+    .optional()
+    .refine(
+      isOptionalStatusCodeMapping,
+      'Status code mapping must use valid HTTP status codes'
+    ),
+  tag: z.string().optional(),
+  remark: z
+    .string()
+    .max(255, 'Remark must be less than 255 characters')
+    .optional(),
+  setting: z
+    .string()
+    .optional()
+    .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
+  param_override: z
+    .string()
+    .optional()
+    .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
+  header_override: z
+    .string()
+    .optional()
+    .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
+  settings: z
+    .string()
+    .optional()
+    .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
+  advanced_custom: z.string().optional(),
+  other: z.string().optional(),
+  // Multi-key options (not sent to backend directly)
+  multi_key_mode: z.enum(['single', 'batch', 'multi_to_single']).optional(),
+  multi_key_type: z.enum(['random', 'polling']).optional(),
+  batch_add_set_key_prefix_2_name: z.boolean().optional(),
+  key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
+  // Channel extra settings (stored in setting JSON, not sent directly)
+  force_format: z.boolean().optional(),
+  thinking_to_content: z.boolean().optional(),
+  proxy: z
+    .string()
+    .optional()
+    .refine(isOptionalProxyURL, ERROR_MESSAGES.INVALID_PROXY),
+  http_protocol: z.enum(['auto', 'http1']).optional(),
+  http2_connection_shards: z.number().int().optional(),
+  pass_through_body_enabled: z.boolean().optional(),
+  system_prompt: z.string().optional(),
+  system_prompt_override: z.boolean().optional(),
+  // Type-specific settings (stored in settings JSON)
+  is_enterprise_account: z.boolean().optional(), // OpenRouter specific
+  vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
+  aws_key_type: z.enum(['ak_sk', 'api_key']).optional(), // AWS specific
+  azure_responses_version: z.string().optional(), // Azure specific
+  // Field passthrough controls (stored in settings JSON)
+  allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic
+  disable_store: z.boolean().optional(), // OpenAI only
+  allow_safety_identifier: z.boolean().optional(), // OpenAI only
+  allow_include_obfuscation: z.boolean().optional(), // OpenAI: include usage obfuscation
+  allow_inference_geo: z.boolean().optional(), // OpenAI/Anthropic: inference geography
+  allow_speed: z.boolean().optional(), // Anthropic: speed mode control
+  claude_beta_query: z.boolean().optional(), // Anthropic: beta query passthrough
+  disable_task_polling_sleep: z.boolean().optional(),
+  // Upstream model update settings (stored in settings JSON)
+  upstream_model_update_check_enabled: z.boolean().optional(),
+  upstream_model_update_auto_sync_enabled: z.boolean().optional(),
+  upstream_model_update_ignored_models: z.string().optional(),
+})
+
+export type ChannelFormValues = z.infer<typeof channelFormBaseSchema>
+
+type ChannelFormSchemaOptions = {
+  isEditing?: boolean
+  isMultiKeyChannel?: boolean
+}
+
+export function getChannelFormSchema(options: ChannelFormSchemaOptions = {}) {
+  return channelFormBaseSchema.superRefine((data, ctx) => {
+    if (!options.isEditing && !data.key.trim()) {
+      addRequiredIssue(ctx, 'key', ERROR_MESSAGES.REQUIRED_KEY)
+    }
+
     if (
       [3, 8, 36, 45, CHANNEL_TYPE_NEW_API].includes(data.type) &&
       !data.base_url?.trim()
@@ -354,14 +385,28 @@ export const channelFormSchema = z
     if (
       data.type === 41 &&
       data.vertex_key_type === 'json' &&
-      data.key?.trim() &&
-      !isVertexJsonKey(data.key)
+      data.key.trim()
     ) {
-      addRequiredIssue(
-        ctx,
-        'key',
-        'Vertex AI service account key must be valid JSON'
-      )
+      const credentialShape = getVertexCredentialShape(data.key)
+      const batchCreate =
+        !options.isEditing &&
+        (data.multi_key_mode === 'batch' ||
+          data.multi_key_mode === 'multi_to_single')
+      let validShape = credentialShape === 'object'
+      if (options.isEditing && options.isMultiKeyChannel) {
+        validShape = credentialShape === 'object' || credentialShape === 'array'
+      } else if (batchCreate) {
+        validShape = credentialShape === 'array'
+      }
+      if (!validShape) {
+        addRequiredIssue(
+          ctx,
+          'key',
+          batchCreate
+            ? 'Vertex AI batch mode requires a non-empty JSON array of service account objects'
+            : 'Vertex AI single-key mode requires one service account JSON object'
+        )
+      }
     }
 
     if (
@@ -394,8 +439,9 @@ export const channelFormSchema = z
       )
     }
   })
+}
 
-export type ChannelFormValues = z.infer<typeof channelFormSchema>
+export const channelFormSchema = getChannelFormSchema()
 
 // ============================================================================
 // Default Form Values
@@ -604,14 +650,25 @@ export function transformChannelToFormDefaults(
  * Build the setting JSON string from form extra settings
  */
 export function buildSettingJSON(formData: ChannelFormValues): string {
-  const settingObj: Record<string, unknown> = {
-    force_format: formData.force_format || false,
-    thinking_to_content: formData.thinking_to_content || false,
-    proxy: formData.proxy?.trim() || '',
-    pass_through_body_enabled: formData.pass_through_body_enabled || false,
-    system_prompt: formData.system_prompt || '',
-    system_prompt_override: formData.system_prompt_override || false,
+  let settingObj: Record<string, unknown> = {}
+  if (formData.setting?.trim()) {
+    try {
+      const parsed = JSON.parse(formData.setting)
+      if (isJsonObjectValue(parsed)) {
+        settingObj = parsed
+      }
+    } catch {
+      // Validation rejects malformed JSON before this transformer is called.
+    }
   }
+
+  settingObj.force_format = formData.force_format || false
+  settingObj.thinking_to_content = formData.thinking_to_content || false
+  settingObj.proxy = formData.proxy?.trim() || ''
+  settingObj.pass_through_body_enabled =
+    formData.pass_through_body_enabled || false
+  settingObj.system_prompt = formData.system_prompt || ''
+  settingObj.system_prompt_override = formData.system_prompt_override || false
 
   const protocol = normalizeHttpProtocol(formData.http_protocol)
   const shards =
@@ -619,7 +676,10 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
       ? 1
       : normalizeHttp2ConnectionShards(formData.http2_connection_shards)
 
-  // Omit defaults so unchanged channels keep equivalent JSON.
+  // Clear legacy transport values before applying the current form state while
+  // preserving settings unknown to this frontend version.
+  delete settingObj.http_protocol
+  delete settingObj.http2_connection_shards
   if (protocol === HTTP_PROTOCOL_HTTP1) {
     settingObj.http_protocol = HTTP_PROTOCOL_HTTP1
   } else if (shards > 1) {

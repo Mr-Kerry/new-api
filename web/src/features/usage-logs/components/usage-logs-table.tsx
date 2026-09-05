@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import { type ColumnDef } from '@tanstack/react-table'
+import type { ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -55,6 +55,7 @@ const logTypeRowTint: Record<number, string> = {
 // Warning tint for logs where a quota conversion saturated (admin-only marker).
 // Takes precedence over the per-type tint since it flags a billing anomaly.
 const quotaSaturationRowTint = 'bg-amber-50/60 dark:bg-amber-950/25'
+const commonLogsInitialColumnVisibility = { cache_hit_rate: false }
 
 function getColumnVisibilityStorageKey(
   logCategory: LogCategory,
@@ -64,7 +65,12 @@ function getColumnVisibilityStorageKey(
 }
 
 function deserializeLogTypeFilter(value: unknown): unknown[] {
-  const values = Array.isArray(value) ? value : value ? [value] : []
+  let values: unknown[] = []
+  if (Array.isArray(value)) {
+    values = value
+  } else if (value) {
+    values = [value]
+  }
   return values.filter((item) => String(item) !== LOG_TYPE_ALL_VALUE)
 }
 
@@ -77,6 +83,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const { isAdminView: isAdmin } = useLogsViewScope()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const searchParams = route.useSearch()
+  const isCommon = logCategory === 'common'
 
   const {
     columnFilters,
@@ -164,6 +171,9 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       logCategory,
       isAdmin
     ),
+    initialColumnVisibility: isCommon
+      ? commonLogsInitialColumnVisibility
+      : undefined,
     pagination,
     enableRowSelection: false,
     onPaginationChange,
@@ -173,8 +183,6 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     totalCount: data?.total || 0,
     ensurePageInRange,
   })
-
-  const isCommon = logCategory === 'common'
 
   return (
     <DataTablePage

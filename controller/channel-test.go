@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -37,9 +36,16 @@ import (
 )
 
 type testResult struct {
-	context     *gin.Context
-	localErr    error
-	newAPIError *types.NewAPIError
+	context        *gin.Context
+	localErr       error
+	newAPIError    *types.NewAPIError
+	usage          *dto.Usage
+	estimatedQuota int
+	// costKnown is false when the provider did not return usage data. A
+	// successful probe can still have an unknown provider-side charge, so zero
+	// must not be interpreted as proof that the upstream was free.
+	costKnown bool
+	other     map[string]interface{}
 }
 
 func normalizeChannelTestEndpoint(channel *model.Channel, endpointType string) string {
@@ -71,6 +77,16 @@ func resolveChannelTestUserID(c *gin.Context) (int, error) {
 }
 
 func testChannel(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool) testResult {
+	return testChannelWithOptions(ctx, channel, testUserID, testModel, endpointType, isStream, true, "")
+}
+
+// testChannelWithoutBilling is used by routing monitors. It follows the exact
+// channel-test relay path but does not create a usage log or charge quota.
+func testChannelWithoutBilling(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, usingGroup string) testResult {
+	return testChannelWithOptions(ctx, channel, testUserID, testModel, endpointType, isStream, false, usingGroup)
+}
+
+func testChannelWithOptions(ctx context.Context, channel *model.Channel, testUserID int, testModel string, endpointType string, isStream bool, recordConsumeLog bool, usingGroupOverride string) testResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -166,6 +182,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	c.Set("channel", channel.Type)
 	c.Set("base_url", channel.GetBaseURL())
 	group, _ := model.GetUserGroup(testUserID, false)
+	if strings.TrimSpace(usingGroupOverride) != "" {
+		group = strings.TrimSpace(usingGroupOverride)
+	}
 	c.Set("group", group)
 
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, testModel)
@@ -464,7 +483,11 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			newAPIError: respErr,
 		}
 	}
-	usage, usageErr := coerceTestUsage(usageA, isStream, info.GetEstimatePromptTokens())
+	usage, upstreamUsageKnown, usageErr := coerceTestUsage(
+		usageA,
+		isStream || priceData.UsePrice,
+		info.GetEstimatePromptTokens(),
+	)
 	if usageErr != nil {
 		return testResult{
 			context:     c,
@@ -490,11 +513,23 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 	info.SetEstimatePromptTokens(usage.PromptTokens)
 
-	quota, tieredResult := settleTestQuota(info, priceData, usage)
+	quota, tieredResult := settleTestQuotaWithContext(c, info, priceData, usage)
 	tok := time.Now()
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
 	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
+	successResult := testResult{
+		context:        c,
+		usage:          usage,
+		estimatedQuota: quota,
+		costKnown:      upstreamUsageKnown || priceData.UsePrice,
+		other:          other,
+	}
+
+	if !recordConsumeLog {
+		return successResult
+	}
+
 	model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
 		ChannelId:        channel.Id,
 		PromptTokens:     usage.PromptTokens,
@@ -509,11 +544,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		Other:            other,
 	})
 	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
-	return testResult{
-		context:     c,
-		localErr:    nil,
-		newAPIError: nil,
-	}
+	return successResult
 }
 
 func attachTestBillingRequestInput(info *relaycommon.RelayInfo, request dto.Request) error {
@@ -529,62 +560,61 @@ func attachTestBillingRequestInput(info *relaycommon.RelayInfo, request dto.Requ
 	return nil
 }
 
+// settleTestQuota computes the same estimate used by a real consume log, but
+// deliberately stops before PreConsumeBilling/SettleBilling. This keeps
+// monitor attempts out of user balances while making the admin cost estimate
+// honor cache/image/audio/other ratios and tool surcharges as well as tiered
+// expressions.
 func settleTestQuota(info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage) (int, *billingexpr.TieredResult) {
-	if usage != nil && info != nil && info.TieredBillingSnapshot != nil {
-		isClaudeUsageSemantic := usage.UsageSemantic == "anthropic" || info.GetFinalRequestRelayFormat() == types.RelayFormatClaude
-		usedVars := billingexpr.UsedVars(info.TieredBillingSnapshot.ExprString)
-		if ok, quota, result := service.TryTieredSettle(info, service.BuildTieredTokenParams(usage, isClaudeUsageSemantic, usedVars)); ok {
-			return quota, result
-		}
-	}
+	return settleTestQuotaWithContext(nil, info, priceData, usage)
+}
 
-	quota := 0
-	if !priceData.UsePrice {
-		quota = usage.PromptTokens + int(math.Round(float64(usage.CompletionTokens)*priceData.CompletionRatio))
-		quota = int(math.Round(float64(quota) * priceData.ModelRatio))
-		if priceData.ModelRatio != 0 && quota <= 0 {
-			quota = 1
-		}
-		return quota, nil
+func settleTestQuotaWithContext(ctx *gin.Context, info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage) (int, *billingexpr.TieredResult) {
+	if usage == nil {
+		return 0, nil
 	}
-
-	return int(priceData.ModelPrice * common.QuotaPerUnit), nil
+	if ctx == nil {
+		ctx = &gin.Context{}
+	}
+	if info == nil {
+		return 0, nil
+	}
+	// ModelPriceHelper has already populated this field. Assigning the value
+	// explicitly also keeps this helper correct when called directly in tests.
+	info.PriceData = priceData
+	return service.EstimateRelayQuotaForMonitor(ctx, info, usage)
 }
 
 func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage, tieredResult *billingexpr.TieredResult) map[string]interface{} {
-	other := service.GenerateTextOtherInfo(c, info, priceData.ModelRatio, priceData.GroupRatioInfo.GroupRatio, priceData.CompletionRatio,
-		usage.PromptTokensDetails.CachedTokens, priceData.CacheRatio, priceData.ModelPrice, priceData.GroupRatioInfo.GroupSpecialRatio)
-	if tieredResult != nil {
-		service.InjectTieredBillingInfo(other, info, tieredResult)
+	if info == nil || usage == nil {
+		return map[string]interface{}{}
 	}
-	return other
+	info.PriceData = priceData
+	return service.GenerateMonitorQuotaLogInfo(c, info, usage, tieredResult)
 }
 
-func coerceTestUsage(usageAny any, isStream bool, estimatePromptTokens int) (*dto.Usage, error) {
+func coerceTestUsage(usageAny any, allowEstimatedUsage bool, estimatePromptTokens int) (*dto.Usage, bool, error) {
 	switch u := usageAny.(type) {
 	case *dto.Usage:
-		return u, nil
+		if u != nil {
+			return u, true, nil
+		}
 	case dto.Usage:
-		return &u, nil
+		return &u, true, nil
 	case nil:
-		if !isStream {
-			return nil, errors.New("usage is nil")
-		}
-		usage := &dto.Usage{
-			PromptTokens: estimatePromptTokens,
-		}
-		usage.TotalTokens = usage.PromptTokens
-		return usage, nil
 	default:
-		if !isStream {
-			return nil, fmt.Errorf("invalid usage type: %T", usageAny)
+		if !allowEstimatedUsage {
+			return nil, false, fmt.Errorf("invalid usage type: %T", usageAny)
 		}
-		usage := &dto.Usage{
-			PromptTokens: estimatePromptTokens,
-		}
-		usage.TotalTokens = usage.PromptTokens
-		return usage, nil
 	}
+	if !allowEstimatedUsage {
+		return nil, false, errors.New("usage is nil")
+	}
+	usage := &dto.Usage{
+		PromptTokens: estimatePromptTokens,
+	}
+	usage.TotalTokens = usage.PromptTokens
+	return usage, false, nil
 }
 
 func readTestResponseBody(body io.ReadCloser, isStream bool) ([]byte, error) {

@@ -40,10 +40,11 @@ import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { LOG_TYPE_ALL_VALUE } from '../../constants'
+import { LOG_TYPE_ALL_VALUE, LOG_TYPE_ENUM } from '../../constants'
 import type { UsageLog } from '../../data/schema'
 import {
   formatModelName,
+  getCacheUsageMetrics,
   getTieredBillingSummary,
   hasAnyCacheTokens,
   parseLogOther,
@@ -57,6 +58,7 @@ import {
   isPerCallBilling,
 } from '../../lib/utils'
 import type { LogOtherData } from '../../types'
+import { CacheHitRateBadge } from '../cache-hit-rate-badge'
 import { DetailsDialog } from '../dialogs/details-dialog'
 import { LogCostDisplay } from '../log-cost-display'
 import { ModelBadge } from '../model-badge'
@@ -94,6 +96,14 @@ function getGroupRatio(other: LogOtherData | null): number | null {
   return null
 }
 
+function getLogUseTime(log: UsageLog, other: LogOtherData | null): number {
+  const responseTimeMs = other?.admin_info?.channel_monitor?.response_time_ms
+  if (typeof responseTimeMs === 'number' && responseTimeMs >= 0) {
+    return responseTimeMs / 1000
+  }
+  return log.use_time || 0
+}
+
 function buildDetailSegments(
   log: UsageLog,
   other: LogOtherData | null,
@@ -125,6 +135,28 @@ function buildTypeDetailSegments(
 
   if (log.type === 6) {
     return [{ text: t('Async task refund') }]
+  }
+
+  if (log.type === LOG_TYPE_ENUM.CHANNEL_MONITOR) {
+    const monitor = other?.admin_info?.channel_monitor
+    if (!monitor) return []
+    let status = t('Failed')
+    if (monitor.status === 'operational') status = t('Operational')
+    if (monitor.status === 'degraded') status = t('Degraded')
+    const segments: DetailSegment[] = [
+      {
+        text: `${status} · ${t('Priority')} ${monitor.priority}`,
+        danger: !monitor.success,
+      },
+      {
+        text: `${t('Attempt')} #${monitor.attempt_order}`,
+        muted: true,
+      },
+    ]
+    if (monitor.cost_known === false) {
+      segments.push({ text: t('Cost estimate unavailable'), muted: true })
+    }
+    return segments
   }
 
   if (log.type !== 2) return []
@@ -625,8 +657,8 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const log = row.original
         if (!isTimingLogType(log.type)) return null
 
-        const useTime = row.getValue('use_time') as number
         const other = parseLogOther(log.other)
+        const useTime = getLogUseTime(log, other)
         const tokensPerSecond =
           useTime > 0 && log.completion_tokens > 0
             ? log.completion_tokens / useTime
@@ -653,17 +685,16 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
 
         const promptTokens = log.prompt_tokens || 0
         const completionTokens = log.completion_tokens || 0
-        if (promptTokens === 0 && completionTokens === 0) {
+        const cacheMetrics = getCacheUsageMetrics(log, other)
+        const hasTokens =
+          promptTokens > 0 ||
+          completionTokens > 0 ||
+          cacheMetrics.cacheReadTokens > 0 ||
+          cacheMetrics.cacheWriteTokens > 0
+
+        if (!hasTokens) {
           return <span className='text-muted-foreground text-xs'>-</span>
         }
-
-        const cacheReadTokens = other?.cache_tokens || 0
-        const cacheWrite5m = other?.cache_creation_tokens_5m || 0
-        const cacheWrite1h = other?.cache_creation_tokens_1h || 0
-        const hasSplitCache = cacheWrite5m > 0 || cacheWrite1h > 0
-        const cacheWriteTokens = hasSplitCache
-          ? cacheWrite5m + cacheWrite1h
-          : other?.cache_creation_tokens || 0
 
         return (
           <div className='flex flex-col gap-0.5'>
@@ -671,16 +702,18 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
               {promptTokens.toLocaleString()} /{' '}
               {completionTokens.toLocaleString()}
             </span>
-            {(cacheReadTokens > 0 || cacheWriteTokens > 0) && (
+            {(cacheMetrics.cacheReadTokens > 0 ||
+              cacheMetrics.cacheWriteTokens > 0) && (
               <div className='flex items-center gap-1 text-[11px]'>
-                {cacheReadTokens > 0 && (
+                {cacheMetrics.cacheReadTokens > 0 && (
                   <span className='text-muted-foreground/60'>
-                    {t('Cache')}↓ {cacheReadTokens.toLocaleString()}
+                    {t('Cache')}↓{' '}
+                    {cacheMetrics.cacheReadTokens.toLocaleString()}
                   </span>
                 )}
-                {cacheWriteTokens > 0 && (
+                {cacheMetrics.cacheWriteTokens > 0 && (
                   <span className='text-muted-foreground/60'>
-                    ↑ {cacheWriteTokens.toLocaleString()}
+                    ↑ {cacheMetrics.cacheWriteTokens.toLocaleString()}
                   </span>
                 )}
               </div>
@@ -688,6 +721,24 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
           </div>
         )
       },
+    },
+    {
+      id: 'cache_hit_rate',
+      header: t('Cache Hit Rate'),
+      accessorFn: (log) =>
+        getCacheUsageMetrics(log, parseLogOther(log.other)).hitRate,
+      cell: ({ row }) => {
+        if (!isDisplayableLogType(row.original.type)) return null
+
+        return (
+          <CacheHitRateBadge
+            hitRate={row.getValue('cache_hit_rate') as number | null}
+          />
+        )
+      },
+      enableSorting: false,
+      size: 130,
+      meta: { label: t('Cache Hit Rate') },
     },
     {
       accessorKey: 'quota',
@@ -709,8 +760,8 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const log = row.original
         if (!isTimingLogType(log.type)) return null
 
-        const useTime = row.getValue('use_time') as number
         const other = parseLogOther(log.other)
+        const useTime = getLogUseTime(log, other)
 
         return (
           <TimingMetricsCell

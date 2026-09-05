@@ -3,12 +3,14 @@ package model
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -60,90 +62,142 @@ func GetAllEnableAbilities() []Ability {
 	return abilities
 }
 
-func getPriority(group string, model string, retry int) (int, error) {
-
-	var priorities []int
-	err := DB.Model(&Ability{}).
-		Select("DISTINCT(priority)").
-		Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true).
-		Order("priority DESC").              // 按优先级降序排序
-		Pluck("priority", &priorities).Error // Pluck用于将查询的结果直接扫描到一个切片中
-
-	if err != nil {
-		// 处理错误
-		return 0, err
-	}
-
-	if len(priorities) == 0 {
-		// 如果没有查询到优先级，则返回错误
-		return 0, errors.New("数据库一致性被破坏")
-	}
-
-	// 确定要使用的优先级
-	var priorityToUse int
-	if retry >= len(priorities) {
-		// 如果重试次数大于优先级数，则使用最小的优先级
-		priorityToUse = priorities[len(priorities)-1]
-	} else {
-		priorityToUse = priorities[retry]
-	}
-	return priorityToUse, nil
-}
-
-func getChannelQuery(group string, model string, retry int) (*gorm.DB, error) {
-	maxPrioritySubQuery := DB.Model(&Ability{}).Select("MAX(priority)").Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true)
-	channelQuery := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ? and priority = (?)", group, model, true, maxPrioritySubQuery)
-	if retry != 0 {
-		priority, err := getPriority(group, model, retry)
-		if err != nil {
-			return nil, err
-		} else {
-			channelQuery = DB.Where(commonGroupCol+" = ? and model = ? and enabled = ? and priority = ?", group, model, true, priority)
-		}
-	}
-
-	return channelQuery, nil
-}
-
 func GetChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
 	var abilities []Ability
-
-	var err error = nil
-	channelQuery, err := getChannelQuery(group, model, retry)
-	if err != nil {
-		return nil, err
-	}
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) || common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
-		err = channelQuery.Order("weight DESC").Find(&abilities).Error
-	} else {
-		err = channelQuery.Order("weight DESC").Find(&abilities).Error
-	}
+	err := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true).
+		Order("weight DESC").Find(&abilities).Error
 	if err != nil {
 		return nil, err
 	}
 	abilities = filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
-	channel := Channel{}
-	if len(abilities) > 0 {
-		// Randomly choose one
-		weightSum := uint(0)
-		for _, ability_ := range abilities {
-			weightSum += ability_.Weight + 10
-		}
-		// Randomly choose one
-		weight := common.GetRandomInt(int(weightSum))
-		for _, ability_ := range abilities {
-			weight -= int(ability_.Weight) + 10
-			//log.Printf("weight: %d, ability weight: %d", weight, *ability_.Weight)
-			if weight <= 0 {
-				channel.Id = ability_.ChannelId
-				break
+	if len(abilities) == 0 {
+		normalizedModel := ratio_setting.FormatMatchingModelName(model)
+		if normalizedModel != "" && normalizedModel != model {
+			err = DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, normalizedModel, true).
+				Order("weight DESC").Find(&abilities).Error
+			if err != nil {
+				return nil, err
 			}
+			abilities = filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
 		}
-	} else {
+	}
+	if len(abilities) == 0 {
 		return nil, nil
 	}
+
+	uniquePriorities := make(map[int64]struct{})
+	for _, ability := range abilities {
+		priority := int64(0)
+		if ability.Priority != nil {
+			priority = *ability.Priority
+		}
+		uniquePriorities[priority] = struct{}{}
+	}
+	priorities := make([]int64, 0, len(uniquePriorities))
+	for priority := range uniquePriorities {
+		priorities = append(priorities, priority)
+	}
+	sort.Slice(priorities, func(left, right int) bool {
+		return priorities[left] > priorities[right]
+	})
+	if retry < 0 {
+		retry = 0
+	}
+	if retry >= len(priorities) {
+		retry = len(priorities) - 1
+	}
+	targetPriority := priorities[retry]
+	targetAbilities := make([]Ability, 0, len(abilities))
+	for _, ability := range abilities {
+		priority := int64(0)
+		if ability.Priority != nil {
+			priority = *ability.Priority
+		}
+		if priority == targetPriority {
+			targetAbilities = append(targetAbilities, ability)
+		}
+	}
+
+	channel := Channel{}
+	weights := make([]uint64, len(targetAbilities))
+	for index, ability := range targetAbilities {
+		weights[index] = selectionWeightFromUint(ability.Weight)
+	}
+	selectedIndex := weightedSelectionIndex(weights, common.GetRandomInt)
+	if selectedIndex < 0 {
+		return nil, errors.New("channel selection failed")
+	}
+	channel.Id = targetAbilities[selectedIndex].ChannelId
 	err = DB.First(&channel, "id = ?", channel.Id).Error
 	return &channel, err
+}
+
+func selectionWeightFromUint(weight uint) uint64 {
+	const adjustment = uint64(10)
+	converted := uint64(weight)
+	if converted > ^uint64(0)-adjustment {
+		return ^uint64(0)
+	}
+	return converted + adjustment
+}
+
+// weightedSelectionIndex scales all weights by the same divisor before using
+// the project's int-based random helper. This preserves useful routing ratios
+// while preventing a saturated first candidate from taking 100% of traffic
+// when two or more configured weights exceed the native int range.
+func weightedSelectionIndex(weights []uint64, randomInt func(int) int) int {
+	if len(weights) == 0 || randomInt == nil {
+		return -1
+	}
+
+	maxWeight := uint64(0)
+	for _, weight := range weights {
+		if weight > maxWeight {
+			maxWeight = weight
+		}
+	}
+	if maxWeight == 0 {
+		return randomInt(len(weights))
+	}
+
+	maxInt := int(^uint(0) >> 1)
+	maxPerCandidate := uint64(maxInt / len(weights))
+	if maxPerCandidate == 0 {
+		return -1
+	}
+	divisor := uint64(1)
+	if maxWeight > maxPerCandidate {
+		divisor = maxWeight / maxPerCandidate
+		if maxWeight%maxPerCandidate != 0 {
+			divisor++
+		}
+	}
+
+	scaled := make([]int, len(weights))
+	total := 0
+	for index, weight := range weights {
+		if weight == 0 {
+			continue
+		}
+		scaledWeight := weight / divisor
+		if scaledWeight == 0 {
+			scaledWeight = 1
+		}
+		scaled[index] = int(scaledWeight)
+		total += scaled[index]
+	}
+	if total <= 0 {
+		return -1
+	}
+
+	randomWeight := randomInt(total)
+	for index, weight := range scaled {
+		if randomWeight < weight {
+			return index
+		}
+		randomWeight -= weight
+	}
+	return -1
 }
 
 // filterAbilitiesByRequestPathAndModel restricts candidates by request path and
@@ -196,11 +250,11 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {
 	models_ := strings.Split(channel.Models, ",")
 	groups_ := strings.Split(channel.Group, ",")
-	abilitySet := make(map[string]struct{})
+	abilitySet := make(map[[2]string]struct{})
 	abilities := make([]Ability, 0, len(models_))
 	for _, model := range models_ {
 		for _, group := range groups_ {
-			key := group + "|" + model
+			key := [2]string{group, model}
 			if _, exists := abilitySet[key]; exists {
 				continue
 			}
@@ -241,38 +295,26 @@ func (channel *Channel) DeleteAbilities() error {
 // UpdateAbilities updates abilities of this channel.
 // Make sure the channel is completed before calling this function.
 func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
-	isNewTx := false
-	// 如果没有传入事务，创建新的事务
 	if tx == nil {
-		tx = DB.Begin()
-		if tx.Error != nil {
-			return tx.Error
-		}
-		isNewTx = true
-		defer func() {
-			if r := recover(); r != nil {
-				tx.Rollback()
-			}
-		}()
+		return DB.Transaction(func(tx *gorm.DB) error {
+			return channel.UpdateAbilities(tx)
+		})
 	}
 
 	// First delete all abilities of this channel
 	err := tx.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error
 	if err != nil {
-		if isNewTx {
-			tx.Rollback()
-		}
 		return err
 	}
 
 	// Then add new abilities
 	models_ := strings.Split(channel.Models, ",")
 	groups_ := strings.Split(channel.Group, ",")
-	abilitySet := make(map[string]struct{})
+	abilitySet := make(map[[2]string]struct{})
 	abilities := make([]Ability, 0, len(models_))
 	for _, model := range models_ {
 		for _, group := range groups_ {
-			key := group + "|" + model
+			key := [2]string{group, model}
 			if _, exists := abilitySet[key]; exists {
 				continue
 			}
@@ -294,17 +336,9 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 		for _, chunk := range lo.Chunk(abilities, 50) {
 			err = tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&chunk).Error
 			if err != nil {
-				if isNewTx {
-					tx.Rollback()
-				}
 				return err
 			}
 		}
-	}
-
-	// 如果是新创建的事务，需要提交
-	if isNewTx {
-		return tx.Commit().Error
 	}
 
 	return nil

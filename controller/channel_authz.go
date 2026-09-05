@@ -1,12 +1,16 @@
 package controller
 
-import "github.com/QuantumNous/new-api/model"
+import (
+	"strings"
+
+	"github.com/QuantumNous/new-api/model"
+)
 
 func channelHasSensitiveChanges(channel *PatchChannel, origin *model.Channel, requestData map[string]any) bool {
 	if _, ok := requestData["type"]; ok && channel.Type != origin.Type {
 		return true
 	}
-	if _, ok := requestData["key"]; ok && channel.Key != "" && channel.Key != origin.Key {
+	if _, ok := requestData["key"]; ok && strings.TrimSpace(channel.Key) != "" && channel.Key != origin.Key {
 		return true
 	}
 	if _, ok := requestData["base_url"]; ok && !equalStringPtr(channel.BaseURL, origin.BaseURL) {

@@ -40,7 +40,7 @@ import { cn } from '@/lib/utils'
 
 import { LOG_TYPE_ENUM } from '../constants'
 import type { UsageLog } from '../data/schema'
-import { parseLogOther } from '../lib/format'
+import { getCacheUsageMetrics, parseLogOther } from '../lib/format'
 import {
   getLogTypeConfig,
   isDisplayableLogType,
@@ -195,23 +195,18 @@ function MobileTokensField({ log }: { log: UsageLog }) {
 
   const promptTokens = log.prompt_tokens || 0
   const completionTokens = log.completion_tokens || 0
-  if (promptTokens === 0 && completionTokens === 0) {
+  const other = parseLogOther(log.other)
+  const cacheMetrics = getCacheUsageMetrics(log, other)
+  const showCache =
+    cacheMetrics.cacheReadTokens > 0 || cacheMetrics.cacheWriteTokens > 0
+
+  if (promptTokens === 0 && completionTokens === 0 && !showCache) {
     return (
       <div className='bg-muted/20 min-w-0 rounded-md px-2 py-1.5'>
         <span className='text-muted-foreground text-xs'>-</span>
       </div>
     )
   }
-
-  const other = parseLogOther(log.other)
-  const cacheReadTokens = other?.cache_tokens || 0
-  const cacheWrite5m = other?.cache_creation_tokens_5m || 0
-  const cacheWrite1h = other?.cache_creation_tokens_1h || 0
-  const hasSplitCache = cacheWrite5m > 0 || cacheWrite1h > 0
-  const cacheWriteTokens = hasSplitCache
-    ? cacheWrite5m + cacheWrite1h
-    : other?.cache_creation_tokens || 0
-  const showCache = cacheReadTokens > 0 || cacheWriteTokens > 0
 
   return (
     <div className='bg-muted/20 min-w-0 rounded-md px-2 py-1.5'>
@@ -221,13 +216,13 @@ function MobileTokensField({ log }: { log: UsageLog }) {
         </span>
         {showCache ? (
           <div className='text-muted-foreground flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] leading-none'>
-            {cacheReadTokens > 0 && (
+            {cacheMetrics.cacheReadTokens > 0 && (
               <span>
-                {t('Cache')}↓ {cacheReadTokens.toLocaleString()}
+                {t('Cache')}↓ {cacheMetrics.cacheReadTokens.toLocaleString()}
               </span>
             )}
-            {cacheWriteTokens > 0 && (
-              <span>↑ {cacheWriteTokens.toLocaleString()}</span>
+            {cacheMetrics.cacheWriteTokens > 0 && (
+              <span>↑ {cacheMetrics.cacheWriteTokens.toLocaleString()}</span>
             )}
           </div>
         ) : (
@@ -282,7 +277,11 @@ function MobileStreamTimingField({ log }: { log: UsageLog }) {
   if (!isTimingLogType(log.type)) return null
 
   const other = parseLogOther(log.other)
-  const useTime = log.use_time || 0
+  const responseTimeMs = other?.admin_info?.channel_monitor?.response_time_ms
+  const useTime =
+    typeof responseTimeMs === 'number' && responseTimeMs >= 0
+      ? responseTimeMs / 1000
+      : log.use_time || 0
   const tokensPerSecond =
     useTime > 0 && log.completion_tokens > 0
       ? log.completion_tokens / useTime
@@ -359,6 +358,11 @@ function CommonLogsCard<TData>({
         ) : (
           <SummaryField cell={cells.get('prompt_tokens')} />
         )}
+        <SummaryField
+          label={t('Cache Hit Rate')}
+          cell={cells.get('cache_hit_rate')}
+          className='col-span-2'
+        />
         <SummaryField
           label={t('Details')}
           cell={cells.get('content')}

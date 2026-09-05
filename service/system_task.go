@@ -199,7 +199,21 @@ func StartLogCleanupTask(targetTimestamp int64) (*model.SystemTask, error) {
 // bool is true only when a new pending row was created; false means an active
 // task of the same type already exists and was returned.
 func EnqueueSystemTask(taskType string, payload any) (*model.SystemTask, bool, error) {
-	activeTask, err := model.GetActiveSystemTask(taskType)
+	return enqueueSystemTask(taskType, taskType, payload)
+}
+
+// EnqueueScopedSystemTask deduplicates active tasks by activeKey instead of by
+// handler type. The system-task lease remains type-scoped, so queued tasks of
+// the same handler still execute serially across application instances.
+func EnqueueScopedSystemTask(taskType string, activeKey string, payload any) (*model.SystemTask, bool, error) {
+	if activeKey == "" {
+		return nil, false, errors.New("system task active key is required")
+	}
+	return enqueueSystemTask(taskType, activeKey, payload)
+}
+
+func enqueueSystemTask(taskType string, activeKey string, payload any) (*model.SystemTask, bool, error) {
+	activeTask, err := model.GetActiveSystemTaskByActiveKey(activeKey)
 	if err != nil {
 		return nil, false, err
 	}
@@ -207,9 +221,9 @@ func EnqueueSystemTask(taskType string, payload any) (*model.SystemTask, bool, e
 		return activeTask, false, nil
 	}
 
-	task, err := model.CreateSystemTask(taskType, payload, nil)
+	task, err := model.CreateSystemTaskWithActiveKey(taskType, activeKey, payload, nil)
 	if err != nil {
-		activeTask, activeErr := model.GetActiveSystemTask(taskType)
+		activeTask, activeErr := model.GetActiveSystemTaskByActiveKey(activeKey)
 		if activeErr == nil && activeTask != nil {
 			return activeTask, false, nil
 		}

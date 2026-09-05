@@ -31,6 +31,7 @@ import {
   ServerCog,
   ShoppingBag,
   Settings,
+  Settings2,
   Ticket,
   User,
   Users,
@@ -38,7 +39,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { type SidebarData } from '@/components/layout/types'
+import type { SidebarData } from '@/components/layout/types'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -104,6 +105,11 @@ export function useSidebarData(): SidebarData {
             url: '/radar',
             icon: Radar,
           },
+          {
+            title: t('Channel status'),
+            url: '/channel-monitor',
+            icon: Activity,
+          },
         ],
       },
       {
@@ -135,6 +141,12 @@ export function useSidebarData(): SidebarData {
             title: t('Channels'),
             url: '/channels',
             icon: Radio,
+          },
+          {
+            title: t('Monitor settings'),
+            url: '/channel-monitor/settings',
+            icon: Settings2,
+            requiredRole: ROLE.ADMIN,
           },
           {
             title: t('Models'),

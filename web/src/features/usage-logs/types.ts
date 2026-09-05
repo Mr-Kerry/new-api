@@ -113,6 +113,22 @@ export interface ToolSurchargeItem {
   price: number
 }
 
+export interface ChannelMonitorLogInfo {
+  monitor_id: number
+  run_id: number
+  attempt_id: number
+  attempt_order: number
+  channel_name?: string
+  priority: number
+  status: 'operational' | 'degraded' | 'failed' | 'error' | string
+  success: boolean
+  response_time_ms: number
+  estimated_quota: number
+  cost_known?: boolean
+  quota_charged: false
+  error?: string
+}
+
 export interface LogOtherData {
   admin_info?: {
     is_multi_key?: boolean
@@ -142,6 +158,7 @@ export interface LogOtherData {
       original: number
       clamped: number
     }
+    channel_monitor?: ChannelMonitorLogInfo
   }
   // Language-independent operation descriptor (audit/login logs).
   // Frontend renders localized content from action + params via i18n templates.
@@ -170,9 +187,16 @@ export interface LogOtherData {
   text_input?: number
   text_output?: number
   cache_tokens?: number
+  // Normalized cache-write total emitted by newer billing paths. Older logs
+  // use the cache_creation_tokens* fields below instead.
+  cache_write_tokens?: number
   cache_creation_tokens?: number
   cache_creation_tokens_5m?: number
   cache_creation_tokens_1h?: number
+  // Normalized total input token count, when the upstream response provides a
+  // reliable value (especially for converted OpenAI-format responses).
+  input_tokens_total?: number
+  usage_semantic?: string
   claude?: boolean
   model_ratio?: number
   completion_ratio?: number

@@ -82,14 +82,15 @@ type Log struct {
 
 // don't use iota, avoid change log type value
 const (
-	LogTypeUnknown = 0
-	LogTypeTopup   = 1
-	LogTypeConsume = 2
-	LogTypeManage  = 3
-	LogTypeSystem  = 4
-	LogTypeError   = 5
-	LogTypeRefund  = 6
-	LogTypeLogin   = 7
+	LogTypeUnknown        = 0
+	LogTypeTopup          = 1
+	LogTypeConsume        = 2
+	LogTypeManage         = 3
+	LogTypeSystem         = 4
+	LogTypeError          = 5
+	LogTypeRefund         = 6
+	LogTypeLogin          = 7
+	LogTypeChannelMonitor = 8
 )
 
 func ensureLogRequestId(log *Log) {
@@ -323,6 +324,93 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
+}
+
+type RecordChannelMonitorLogParams struct {
+	UserID           int
+	MonitorID        int64
+	RunID            int64
+	AttemptID        int64
+	AttemptOrder     int
+	ChannelID        int
+	ChannelName      string
+	ModelName        string
+	Group            string
+	Priority         int64
+	Status           string
+	Success          bool
+	ResponseTimeMs   int64
+	PromptTokens     int
+	CompletionTokens int
+	EstimatedQuota   int
+	CostKnown        bool
+	IsStream         bool
+	Error            string
+	Other            map[string]interface{}
+}
+
+// RecordChannelMonitorLog stores one upstream attempt as an admin-only usage
+// log. Its estimated cost is included in admin cost statistics, but it is
+// excluded from user usage and throughput statistics and never changes quota.
+func RecordChannelMonitorLog(params RecordChannelMonitorLogParams) error {
+	if params.EstimatedQuota < 0 {
+		// Monitoring is an accounting/audit path; never persist a negative
+		// estimate that could be interpreted as a credit in admin statistics.
+		params.EstimatedQuota = 0
+	}
+	other := make(map[string]interface{}, len(params.Other)+1)
+	for key, value := range params.Other {
+		other[key] = value
+	}
+
+	adminInfo := map[string]interface{}{}
+	if existing, ok := other["admin_info"].(map[string]interface{}); ok {
+		for key, value := range existing {
+			adminInfo[key] = value
+		}
+	}
+	monitorInfo := map[string]interface{}{
+		"monitor_id":       params.MonitorID,
+		"run_id":           params.RunID,
+		"attempt_id":       params.AttemptID,
+		"attempt_order":    params.AttemptOrder,
+		"channel_name":     params.ChannelName,
+		"priority":         params.Priority,
+		"status":           params.Status,
+		"success":          params.Success,
+		"response_time_ms": params.ResponseTimeMs,
+		"estimated_quota":  params.EstimatedQuota,
+		"cost_known":       params.CostKnown,
+		"quota_charged":    false,
+	}
+	if params.Error != "" {
+		monitorInfo["error"] = params.Error
+	}
+	adminInfo["channel_monitor"] = monitorInfo
+	other["admin_info"] = adminInfo
+
+	content := "Channel monitor attempt succeeded"
+	if !params.Success {
+		content = "Channel monitor attempt failed"
+	}
+	username, _ := GetUsernameById(params.UserID, false)
+	return createLog(&Log{
+		UserId:           params.UserID,
+		Username:         username,
+		CreatedAt:        common.GetTimestamp(),
+		Type:             LogTypeChannelMonitor,
+		Content:          content,
+		TokenName:        "渠道监控",
+		ModelName:        params.ModelName,
+		Quota:            params.EstimatedQuota,
+		PromptTokens:     params.PromptTokens,
+		CompletionTokens: params.CompletionTokens,
+		UseTime:          int(params.ResponseTimeMs / 1000),
+		IsStream:         params.IsStream,
+		ChannelId:        params.ChannelID,
+		Group:            params.Group,
+		Other:            common.MapToJsonStr(other),
+	})
 }
 
 type RecordConsumeLogParams struct {
@@ -562,9 +650,12 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 const logSearchCountLimit = 10000
 
 func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+	if logType == LogTypeChannelMonitor {
+		return []*Log{}, 0, nil
+	}
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
-		tx = LOG_DB.Where("logs.user_id = ?", userId)
+		tx = LOG_DB.Where("logs.user_id = ? AND logs.type <> ?", userId, LogTypeChannelMonitor)
 	} else {
 		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
 	}
@@ -615,7 +706,7 @@ type Stat struct {
 	Tpm   int `json:"tpm"`
 }
 
-func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
+func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, includeChannelMonitorCost bool) (stat Stat, err error) {
 	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
 
 	// 为rpm和tpm创建单独的查询
@@ -652,8 +743,34 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 		rpmTpmQuery = rpmTpmQuery.Where(logGroupCol+" = ?", group)
 	}
 
-	tx = tx.Where("type = ?", LogTypeConsume)
-	rpmTpmQuery = rpmTpmQuery.Where("type = ?", LogTypeConsume)
+	quotaLogTypes := []int{}
+	trafficLogTypes := []int{}
+	switch logType {
+	case LogTypeUnknown:
+		quotaLogTypes = append(quotaLogTypes, LogTypeConsume)
+		if includeChannelMonitorCost {
+			quotaLogTypes = append(quotaLogTypes, LogTypeChannelMonitor)
+		}
+		trafficLogTypes = append(trafficLogTypes, LogTypeConsume)
+	case LogTypeConsume:
+		quotaLogTypes = append(quotaLogTypes, LogTypeConsume)
+		trafficLogTypes = append(trafficLogTypes, LogTypeConsume)
+	case LogTypeChannelMonitor:
+		if includeChannelMonitorCost {
+			quotaLogTypes = append(quotaLogTypes, LogTypeChannelMonitor)
+		}
+	}
+
+	if len(quotaLogTypes) == 0 {
+		tx = tx.Where("1 = 0")
+	} else {
+		tx = tx.Where("type IN ?", quotaLogTypes)
+	}
+	if len(trafficLogTypes) == 0 {
+		rpmTpmQuery = rpmTpmQuery.Where("1 = 0")
+	} else {
+		rpmTpmQuery = rpmTpmQuery.Where("type IN ?", trafficLogTypes)
+	}
 
 	// 只统计最近60秒的rpm和tpm
 	rpmTpmQuery = rpmTpmQuery.Where("created_at >= ?", time.Now().Add(-60*time.Second).Unix())
